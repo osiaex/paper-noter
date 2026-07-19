@@ -1,7 +1,12 @@
 # Paper Noter
 
-> 只理解眼前这一段，让论文阅读少一点打断。
-> Understand what is in view, without interrupting the reading flow.
+出于自身需求设计了本项目。用于快速阅读繁杂pdf的轻量化浏览器插件，接入api直接在pdf上划出重点与名词解释，随pdf长期保存，支持连续追问。
+
+项目开源，欢迎一起改进 ：）
+
+I designed this project based on my own needs. It is a lightweight browser plugin for quickly reading complex PDFs. It integrates with an API to directly highlight key points and provide explanations for terms on the PDF, which can be saved along with the PDF. It also supports continuous questioning.
+
+The project is open source, and we welcome improvements together :)
 
 [中文](#中文) · [English](#english) · [v0.6 Release](https://github.com/osiaex/paper-noter/releases/tag/v0.6)
 

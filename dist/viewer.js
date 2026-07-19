@@ -247,6 +247,7 @@ async function createPagePlaceholders() {
     element.dataset.page = String(pageNumber);
     element.style.width = `${viewport.width}px`;
     element.style.height = `${viewport.height}px`;
+    element.style.setProperty("--scale-factor", viewport.scale);
     element.innerHTML = `<canvas></canvas><div class="sent-coverage-layer"></div><div class="text-map"></div><div class="annotation-layer"></div>`;
     ui.pages.append(element);
     const record = { pageNumber, page, viewport, element, canvas: element.querySelector("canvas"), textItems: [], rendered: false, rendering: null };
@@ -278,28 +279,33 @@ async function renderPage(pageNumber) {
       transform: outputScale === 1 ? null : [outputScale, 0, 0, outputScale, 0, 0],
     }).promise;
 
-    const textContent = await record.page.getTextContent();
+    const textContent = await record.page.getTextContent({ includeMarkedContent: true });
     const textMap = record.element.querySelector(".text-map");
     textMap.addEventListener("click", (event) => handleTextMapAnnotationClick(pageNumber, event));
-    record.textItems = textContent.items.filter((item) => item.str?.trim()).map((item, index) => {
-      const transform = pdfjsLib.Util.transform(record.viewport.transform, item.transform);
-      const fontHeight = Math.max(5, Math.hypot(transform[2], transform[3]));
-      const left = transform[4];
-      const top = transform[5] - fontHeight;
-      const width = Math.max(2, item.width * record.viewport.scale);
-      const height = fontHeight * 1.12;
-      const span = document.createElement("span");
-      span.className = "text-item";
-      span.textContent = item.str;
-      span.dataset.spanId = `p${pageNumber}s${index}`;
-      Object.assign(span.style, { left: `${left}px`, top: `${top}px`, width: `${width}px`, height: `${height}px`, fontSize: `${fontHeight}px` });
-      textMap.append(span);
-      return {
-        id: `p${pageNumber}s${index}`,
+    const textLayer = new pdfjsLib.TextLayer({ textContentSource: textContent, container: textMap, viewport: record.viewport });
+    await textLayer.render();
+    record.textLayer = textLayer;
+    const stringItems = textContent.items.filter((item) => item.str !== undefined);
+    const pageRect = record.element.getBoundingClientRect();
+    let visibleIndex = 0;
+    record.textItems = stringItems.flatMap((item, itemIndex) => {
+      if (!item.str?.trim()) return [];
+      const span = textLayer.textDivs[itemIndex];
+      if (!span?.isConnected) return [];
+      const id = `p${pageNumber}s${visibleIndex++}`;
+      span.classList.add("text-item");
+      span.dataset.spanId = id;
+      const rect = span.getBoundingClientRect();
+      const left = clamp(rect.left - pageRect.left, 0, pageRect.width);
+      const top = clamp(rect.top - pageRect.top, 0, pageRect.height);
+      const right = clamp(rect.right - pageRect.left, left, pageRect.width);
+      const bottom = clamp(rect.bottom - pageRect.top, top, pageRect.height);
+      return [{
+        id,
         text: item.str,
         element: span,
-        box: [left / record.viewport.width, top / record.viewport.height, (left + width) / record.viewport.width, (top + height) / record.viewport.height],
-      };
+        box: [left / pageRect.width, top / pageRect.height, right / pageRect.width, bottom / pageRect.height],
+      }];
     });
     record.rendered = true;
     renderPageAnnotations(pageNumber);

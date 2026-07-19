@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   release:
-    if: github.ref == 'refs/tags/v0.6' || github.event.head_commit.message == 'release: prepare Paper Noter v0.6'
+    if: "${{ github.ref == 'refs/tags/v0.6' || github.event.head_commit.message == 'fix: release v0.6 workflow' }}"
     runs-on: windows-latest
     steps:
       - name: Check out repository

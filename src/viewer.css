@@ -44,6 +44,10 @@ button { color: inherit; }
 .pages { width: max-content; min-width: 100%; padding: 34px 96px 120px; }
 .pdf-page { position: relative; margin: 0 auto 24px; background: white; box-shadow: 0 8px 30px rgba(34,45,42,.13); }
 .pdf-page canvas { display: block; }
+.sent-coverage-layer { position: absolute; z-index: 1; inset: 0; overflow: hidden; pointer-events: none; }
+.sent-coverage-region { position: absolute; left: 0; width: 100%; background: #727876; opacity: .15; animation: sent-coverage-breathe 4.8s ease-in-out infinite; }
+@keyframes sent-coverage-breathe { 0%, 100% { opacity: .15; } 50% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .sent-coverage-region { animation: none; opacity: .1; } }
 .text-map, .annotation-layer { position: absolute; inset: 0; overflow: hidden; }
 .text-map { z-index: 2; color: transparent; user-select: text; }
 .text-item { position: absolute; color: transparent; white-space: pre; line-height: 1; transform-origin: left bottom; }
@@ -106,10 +110,11 @@ button { color: inherit; }
 .bubble-body { margin-top: 11px; font-family: Georgia, "Noto Serif SC", serif; font-size: 14px; line-height: 1.65; }
 .bubble-context { margin-top: 11px; padding: 9px 10px; border-radius: 9px; color: #41504d; background: #f0f3ef; font-size: 12px; line-height: 1.55; }
 .bubble-term { padding: 0; color: var(--term); border: 0; border-bottom: 1.5px solid var(--term); background: none; cursor: pointer; font-family: inherit; }
-.bubble-note-mark { display: inline; margin: 0; padding: 0; color: inherit; border: 0; background: transparent; cursor: pointer; font: inherit; line-height: inherit; }
-.bubble-note-mark.term { border-bottom: 2px solid var(--term); }
-.bubble-note-mark.keypoint { text-decoration: underline 2px var(--keypoint); text-underline-offset: 4px; }
+.bubble-note-mark { display: inline; margin: 0; padding: 0; color: inherit; background: transparent; cursor: pointer; font: inherit; line-height: inherit; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+.bubble-note-mark.term { text-decoration-line: underline; text-decoration-color: var(--term); text-decoration-thickness: 2px; text-underline-offset: 2px; }
+.bubble-note-mark.keypoint { border-bottom: 2px solid var(--keypoint); }
 .bubble-note-mark:hover { background: rgba(48,118,201,.07); }
+.bubble-note-mark:focus-visible { outline: 1.5px solid currentColor; outline-offset: 2px; border-radius: 2px; }
 .bubble-loading { color: var(--muted); }
 
 .settings-dialog { width: min(520px, calc(100vw - 30px)); max-height: calc(100vh - 30px); padding: 0; overflow: auto; border: 1px solid var(--line); border-radius: 18px; box-shadow: var(--shadow); }
@@ -137,6 +142,8 @@ button { color: inherit; }
 .settings-dialog label.select-label { display: grid; grid-template-columns: 1fr auto; align-items: center; margin-top: 13px; padding: 9px 10px; border-radius: 9px; background: #f4f6f3; }
 .select-label select { min-width: 190px; padding: 7px 9px; color: var(--ink); border: 1px solid var(--line); border-radius: 8px; background: white; }
 .select-label.disabled { opacity: .45; }
+.quick-link-custom.hidden { display: none; }
+.quick-link-custom { margin-top: 9px; padding: 1px 11px 11px; border-radius: 10px; background: #f4f6f3; }
 .setting-hint { margin: 9px 0 0; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 9px; margin-top: 20px; }
 .dialog-spacer { flex: 1; }

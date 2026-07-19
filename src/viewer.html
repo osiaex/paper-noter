@@ -10,12 +10,12 @@
     <header class="toolbar">
       <div class="brand"><span class="brand-mark">P</span><span>Paper Memory</span></div>
       <div class="document-actions">
-        <button id="openFile" class="button primary">打开 PDF</button>
+        <button id="openFile" class="button primary" data-i18n="openPdf">打开 PDF</button>
         <input id="fileInput" type="file" accept="application/pdf,.pdf" hidden />
-        <span id="documentTitle" class="document-title">尚未打开论文</span>
+        <span id="documentTitle" class="document-title" data-i18n="noPaper">尚未打开论文</span>
       </div>
       <div class="toolbar-actions">
-        <span id="analysisState" class="status">等待 PDF</span>
+        <span id="analysisState" class="status" data-i18n="waitingPdf">等待 PDF</span>
         <button id="toggleAnalysis" class="icon-button" title="暂停或继续智能标注" disabled>◉</button>
         <button id="resendViewport" class="icon-button" title="清除当前视野的发送记录并重新识别" disabled>↻</button>
         <button id="exportMemory" class="icon-button" title="导出当前 PDF memory" disabled>⇩</button>
@@ -26,15 +26,15 @@
     <main id="workspace" class="workspace empty">
       <aside class="figure-rail">
         <button id="understandImage" class="figure-button" title="立即截取并理解当前视野" disabled>
-          <span>▧</span><small>理解图片</small>
+          <span>▧</span><small data-i18n="understandImage">理解图片</small>
         </button>
       </aside>
       <section id="viewer" class="viewer">
         <div id="emptyState" class="empty-state">
           <div class="empty-icon">PDF</div>
-          <h1>把论文放进来，专注眼前这一页</h1>
-          <p>直接打开网页或本地 PDF 即可自动进入阅读器，也可以在这里手动选择文件。</p>
-          <button id="emptyOpenFile" class="button primary">选择 PDF</button>
+          <h1 data-i18n="emptyTitle">把论文放进来，专注眼前这一页</h1>
+          <p data-i18n="emptyDescription">直接打开网页或本地 PDF 即可自动进入阅读器，也可以在这里手动选择文件。</p>
+          <button id="emptyOpenFile" class="button primary" data-i18n="choosePdf">选择 PDF</button>
         </div>
         <div id="pages" class="pages"></div>
       </section>
@@ -48,40 +48,68 @@
     <dialog id="settingsDialog" class="settings-dialog">
       <form id="settingsForm" method="dialog">
         <div class="dialog-heading">
-          <div><small>连接模型</small><h2>API 设置</h2></div>
+          <div><small data-i18n="connectModel">连接模型</small><h2 data-i18n="apiSettings">API 设置</h2></div>
           <button type="button" id="closeSettings" class="icon-button">×</button>
         </div>
-        <label>OpenAI 兼容接口地址<input id="apiEndpoint" type="url" required placeholder="https://api.openai.com/v1 或完整 chat/completions 地址" /></label>
-        <label>模型名称<input id="apiModel" required placeholder="支持视觉输入的模型" /></label>
+        <label><span data-i18n="endpoint">OpenAI 兼容接口地址</span><input id="apiEndpoint" type="url" required placeholder="https://api.openai.com/v1 或完整 chat/completions 地址" /></label>
+        <label><span data-i18n="modelName">模型名称</span><input id="apiModel" required placeholder="支持视觉输入的模型" /></label>
         <label>API Key<input id="apiKey" type="password" required autocomplete="off" placeholder="sk-..." /></label>
-        <p class="privacy-note">Key 仅保存在浏览器本地。图片和当前视野文本只会在触发分析时发往你填写的接口。</p>
+        <p class="privacy-note" data-i18n="privacy">Key 仅保存在浏览器本地。图片和当前视野文本只会在触发分析时发往你填写的接口。</p>
         <section class="settings-section">
-          <div class="section-title"><strong>视野范围</strong><output id="focusHeightValue">60%</output></div>
-          <input id="focusHeight" class="range-input" type="range" min="20" max="100" step="5" value="60" />
-          <div class="range-labels"><span>更快 · 20%</span><span>更多上下文 · 100%</span></div>
-          <label class="checkbox-label"><input id="showFocusGuide" type="checkbox" /><span>显示视野边框，并稍微调暗视野外内容</span></label>
+          <div class="section-title"><strong data-i18n="interfaceLanguage">界面语言</strong></div>
+          <label class="select-label"><span data-i18n="language">语言</span>
+            <select id="interfaceLanguage"><option value="zh">中文</option><option value="en">English</option></select>
+          </label>
         </section>
         <section class="settings-section">
-          <div class="section-title"><strong>自动分析发送内容</strong></div>
-          <label class="radio-label"><input type="radio" name="viewportPayloadMode" value="text" /><span><b>仅发送文本</b><small>速度更快，不上传视野截图</small></span></label>
-          <label class="radio-label"><input type="radio" name="viewportPayloadMode" value="image" checked /><span><b>文本 + 视野截图</b><small>适合公式、版式与图文混排内容</small></span></label>
-          <label id="imagePrecisionRow" class="select-label">截图精度
+          <div class="section-title"><strong data-i18n="focusRange">视野范围</strong><output id="focusHeightValue">60%</output></div>
+          <input id="focusHeight" class="range-input" type="range" min="20" max="100" step="5" value="60" />
+          <div class="range-labels"><span data-i18n="faster">更快 · 20%</span><span data-i18n="moreContext">更多上下文 · 100%</span></div>
+          <label class="checkbox-label"><input id="showFocusGuide" type="checkbox" /><span data-i18n="showFocus">显示视野边框，并稍微调暗视野外内容</span></label>
+        </section>
+        <section class="settings-section">
+          <div class="section-title"><strong data-i18n="payloadHeading">自动分析发送内容</strong></div>
+          <label class="radio-label"><input type="radio" name="viewportPayloadMode" value="text" /><span><b data-i18n="textOnly">仅发送文本</b><small data-i18n="textOnlyHint">速度更快，不上传视野截图</small></span></label>
+          <label class="radio-label"><input type="radio" name="viewportPayloadMode" value="image" checked /><span><b data-i18n="textImage">文本 + 视野截图</b><small data-i18n="textImageHint">适合公式、版式与图文混排内容</small></span></label>
+          <label id="imagePrecisionRow" class="select-label"><span data-i18n="imagePrecision">截图精度</span>
             <select id="imagePrecision">
-              <option value="low">低 · 最长边 768px</option>
-              <option value="balanced" selected>标准 · 最长边 1152px</option>
-              <option value="high">高 · 最长边 1600px</option>
+              <option value="low" data-i18n="precisionLow">低 · 最长边 768px</option>
+              <option value="balanced" selected data-i18n="precisionBalanced">标准 · 最长边 1152px</option>
+              <option value="high" data-i18n="precisionHigh">高 · 最长边 1600px</option>
             </select>
           </label>
-          <p class="setting-hint">仅影响自动视野分析；气泡问号和“理解图片”仍会按需发送图片。</p>
+          <p class="setting-hint" data-i18n="payloadHint">仅影响自动视野分析；气泡问号和“理解图片”仍会按需发送图片。</p>
+        </section>
+        <section class="settings-section">
+          <div class="section-title"><strong data-i18n="quickLinks">名词气泡快速链接</strong></div>
+          <label class="select-label"><span data-i18n="searchService">搜索服务</span>
+            <select id="quickLinkProvider">
+              <option value="wiki">Wiki</option>
+              <option value="scholar">Google Scholar</option>
+              <option value="cnki">知网</option>
+              <option value="chatgpt">ChatGPT</option>
+              <option value="gemini">Gemini</option>
+              <option value="qwen">QWEN</option>
+              <option value="kimi">Kimi</option>
+              <option value="deepseek">DeepSeek</option>
+              <option value="glm">GLM</option>
+              <option value="custom">自定义</option>
+            </select>
+          </label>
+          <div id="quickLinkCustom" class="quick-link-custom hidden">
+            <label><span data-i18n="quickLinkLabel">灰色标题名称</span><input id="quickLinkCustomLabel" placeholder="例如：My Search" /></label>
+            <label><span data-i18n="quickLinkTemplate">搜索 URL 模板</span><input id="quickLinkCustomTemplate" type="text" inputmode="url" placeholder="https://example.com/search?q={query}" /></label>
+          </div>
+          <p class="setting-hint" data-i18n="quickLinkHint">`{query}` 会替换为当前气泡自身的名词。部分 AI 网站可能只打开官方对话页，是否自动预填取决于该网站当前支持情况。</p>
         </section>
         <div id="apiTestResult" class="api-test-result" aria-live="polite"></div>
-        <div class="dialog-actions"><button type="button" id="testApi" class="button">测试连接</button><span class="dialog-spacer"></span><button type="button" id="cancelSettings" class="button">取消</button><button type="submit" class="button primary">保存</button></div>
+        <div class="dialog-actions"><button type="button" id="testApi" class="button" data-i18n="testConnection">测试连接</button><span class="dialog-spacer"></span><button type="button" id="cancelSettings" class="button" data-i18n="cancel">取消</button><button type="submit" class="button primary" data-i18n="save">保存</button></div>
       </form>
     </dialog>
 
     <aside id="errorPanel" class="error-panel hidden" role="alert">
-      <div><strong id="errorTitle">分析失败</strong><p id="errorDetail"></p></div>
-      <button id="errorSettings" class="button">检查 API 设置</button>
+      <div><strong id="errorTitle" data-i18n="analysisFailed">分析失败</strong><p id="errorDetail"></p></div>
+      <button id="errorSettings" class="button" data-i18n="checkApi">检查 API 设置</button>
       <button id="dismissError" class="icon-button" title="关闭">×</button>
     </aside>
     <div id="toast" class="toast" role="status"></div>

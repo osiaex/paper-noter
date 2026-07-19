@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Paper Memory Reader",
   "description": "只理解当前视野的学术 PDF 阅读器，保存每篇论文的重点、名词和图片解释。",
-  "version": "0.5.14",
+  "version": "0.5.17",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvbUgLKO1OG8YDb2KVlPFtZSBnm4GKjEtFdc2O0Ml1lAPIHkzNdx4lYk+5owCukg6mCMGNBxpcpG1FxEz9VWVVkRChXDYL2xDgPqVpmKdPgNot3tqOwikwUwsL1L8gZrfOLz9uMsG/8PXUUPC/KoyP54kSW0yx5kRTQ5lu+CisNnAs3hMC5454/5Jq2Jh8KimOxM/Ikj6+3by4TPO4iI3G3hfWxRmJYm5w34GBpIq2RbBl3ke6lbJkWmAB1SoGVKdI6qKT1PjfaERjqzbaBmNhCevmcXWyqYnqoxntFgfYcvAwf+riazbrilXuyOgxJCrbapyVIZOf67GYk8bQ6FDoQIDAQAB",
   "action": {
     "default_title": "打开 Paper Memory Reader"

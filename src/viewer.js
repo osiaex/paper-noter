@@ -3,6 +3,7 @@ import { extractAssistantText, loadApiSettings, parseJsonResponse, requestVision
 import { PaperMemory, sha256 } from "./memory.js";
 import { pdfFileName } from "./pdf-routing.js";
 import { intervalLength } from "./coverage.js";
+import { buildQuickLink, normalizeQuickLinkSettings, validateQuickLinkSettings } from "./quick-links.js";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = chrome.runtime.getURL("vendor/pdf.worker.mjs");
 
@@ -14,6 +15,51 @@ const IMAGE_PRECISION = {
   balanced: { maxSide: 1152, quality: .72 },
   high: { maxSide: 1600, quality: .86 },
 };
+const UI_TEXT = {
+  zh: {
+    openPdf: "打开 PDF", noPaper: "尚未打开论文", waitingPdf: "等待 PDF", understandImage: "理解图片",
+    emptyTitle: "把论文放进来，专注眼前这一页", emptyDescription: "直接打开网页或本地 PDF 即可自动进入阅读器，也可以在这里手动选择文件。", choosePdf: "选择 PDF",
+    connectModel: "连接模型", apiSettings: "API 设置", endpoint: "OpenAI 兼容接口地址", modelName: "模型名称",
+    privacy: "Key 仅保存在浏览器本地。图片和当前视野文本只会在触发分析时发往你填写的接口。",
+    interfaceLanguage: "界面语言", language: "语言", focusRange: "视野范围", faster: "更快 · 20%", moreContext: "更多上下文 · 100%", showFocus: "显示视野边框，并稍微调暗视野外内容",
+    payloadHeading: "自动分析发送内容", textOnly: "仅发送文本", textOnlyHint: "速度更快，不上传视野截图", textImage: "文本 + 视野截图", textImageHint: "适合公式、版式与图文混排内容", imagePrecision: "截图精度", precisionLow: "低 · 最长边 768px", precisionBalanced: "标准 · 最长边 1152px", precisionHigh: "高 · 最长边 1600px", payloadHint: "仅影响自动视野分析；气泡问号和“理解图片”仍会按需发送图片。",
+    quickLinks: "名词气泡快速链接", searchService: "搜索服务", quickLinkLabel: "灰色标题名称", quickLinkTemplate: "搜索 URL 模板", quickLinkHint: "`{query}` 会替换为当前气泡自身的名词。部分 AI 网站可能只打开官方对话页，是否自动预填取决于该网站当前支持情况。",
+    testConnection: "测试连接", cancel: "取消", save: "保存", analysisFailed: "分析失败", checkApi: "检查 API 设置",
+  },
+  en: {
+    openPdf: "Open PDF", noPaper: "No paper open", waitingPdf: "Waiting for PDF", understandImage: "Understand image",
+    emptyTitle: "Bring in a paper and focus on what is in front of you", emptyDescription: "Open a web or local PDF directly, or choose a file here.", choosePdf: "Choose PDF",
+    connectModel: "Connect model", apiSettings: "API settings", endpoint: "OpenAI-compatible endpoint", modelName: "Model name",
+    privacy: "Your key is stored only in this browser. Images and viewport text are sent only when analysis is triggered.",
+    interfaceLanguage: "Interface language", language: "Language", focusRange: "Viewport range", faster: "Faster · 20%", moreContext: "More context · 100%", showFocus: "Show the viewport border and dim content outside it",
+    payloadHeading: "Automatic analysis payload", textOnly: "Text only", textOnlyHint: "Faster; does not upload a viewport image", textImage: "Text + viewport image", textImageHint: "Best for formulas, layout, and mixed visual content", imagePrecision: "Image precision", precisionLow: "Low · longest side 768px", precisionBalanced: "Balanced · longest side 1152px", precisionHigh: "High · longest side 1600px", payloadHint: "Only affects automatic analysis; bubble follow-ups and image understanding still send images when needed.",
+    quickLinks: "Term bubble quick link", searchService: "Search service", quickLinkLabel: "Gray title label", quickLinkTemplate: "Search URL template", quickLinkHint: "`{query}` is replaced with the current bubble term. Some AI sites may only open their official chat page if URL-prefill is unsupported.",
+    testConnection: "Test connection", cancel: "Cancel", save: "Save", analysisFailed: "Analysis failed", checkApi: "Check API settings",
+  },
+};
+const RUNTIME_EN = new Map([
+  ["正在直接加载 PDF…", "Loading PDF directly…"], ["直接加载失败", "Direct loading failed"], ["正在打开…", "Opening…"],
+  ["本地 memory 已加载", "Local memory loaded"], ["PDF 打开失败", "Failed to open PDF"], ["打开失败", "Open failed"],
+  ["智能标注已开启", "Smart annotation enabled"], ["智能标注已暂停", "Smart annotation paused"],
+  ["正在重新分析选中的气泡文本", "Re-analyzing selected bubble text"], ["气泡文本 noting 已发出", "Bubble noting request sent"],
+  ["气泡 noting 已保存", "Bubble noting saved"], ["气泡 noting 未生成标注", "Bubble noting produced no annotations"], ["气泡文本 noting 结束", "Bubble noting finished"],
+  ["正在清理当前视野的发送记录…", "Resetting the current viewport…"], ["当前视野没有可提取文本", "No extractable text in the current viewport"],
+  ["当前视野已重新标为已发送，正在重新识别", "Viewport marked as sent; re-analyzing"], ["重新发送失败", "Resend failed"],
+  ["请先设置 API", "Configure the API first"], ["等待 API 设置", "Waiting for API settings"], ["正在捕捉当前视野", "Capturing current viewport"],
+  ["当前视野已发送或已完成 · 跳过识别", "Viewport already sent or completed · skipped"], ["新区域没有文本 · 已记录覆盖", "New region has no text · coverage recorded"],
+  ["已提取未扫描文本", "Extracted unscanned text"], ["已提取 PDF 文本", "Extracted PDF text"], ["已从本地 memory 恢复", "Restored from local memory"],
+  ["该视野正在识别", "This viewport is already being analyzed"], ["正在理解当前视野（图文）…", "Understanding viewport (text + image)…"], ["正在理解当前视野（仅文本）…", "Understanding viewport (text only)…"],
+  ["截图已压缩，正在准备请求", "Image compressed; preparing request"], ["文本载荷已准备", "Text payload ready"],
+  ["请求已发出，等待模型响应", "Request sent; waiting for model"], ["模型已响应，正在解析和定位", "Model responded; parsing and locating"],
+  ["首次结果无法定位，正在轻量修复", "Initial result could not be located; repairing"], ["首次未返回标注，正在补充请求", "No initial annotations; sending a repair request"],
+  ["修复结果已返回，正在重新定位", "Repair result returned; locating annotations"], ["正在绘制划线并保存 memory", "Drawing underlines and saving memory"],
+  ["视野理解完成", "Viewport analysis complete"], ["本次没有有效标注", "No valid annotations this time"], ["分析暂不可用", "Analysis temporarily unavailable"],
+  ["当前视野分析失败", "Current viewport analysis failed"], ["分析任务结束", "Analysis task finished"],
+  ["正在捕捉追问上下文", "Capturing follow-up context"], ["追问载荷已准备", "Follow-up payload ready"], ["追问结果已返回，正在保存", "Follow-up returned; saving"], ["追问已保存", "Follow-up saved"], ["追问任务结束", "Follow-up task finished"],
+  ["正在理解当前视野图片…", "Understanding current viewport image…"], ["图片解释已保存", "Image explanation saved"], ["图片理解失败", "Image understanding failed"],
+  ["准备理解当前视野", "Preparing viewport analysis"], ["等待当前视野稳定", "Waiting for the viewport to settle"],
+  ["设置已保存在本地", "Settings saved locally"], ["未知错误", "Unknown error"],
+]);
 const ui = {
   workspace: $("#workspace"), viewer: $("#viewer"), pages: $("#pages"), fileInput: $("#fileInput"),
   openFile: $("#openFile"), emptyOpenFile: $("#emptyOpenFile"), documentTitle: $("#documentTitle"),
@@ -25,6 +71,8 @@ const ui = {
   focusHeight: $("#focusHeight"), focusHeightValue: $("#focusHeightValue"), showFocusGuide: $("#showFocusGuide"),
   focusGuideMask: $("#focusGuideMask"), focusGuide: $("#focusGuide"),
   selectionTools: $("#selectionTools"), selectionQuestion: $("#selectionQuestion"),
+  quickLinkProvider: $("#quickLinkProvider"), quickLinkCustom: $("#quickLinkCustom"), quickLinkCustomLabel: $("#quickLinkCustomLabel"), quickLinkCustomTemplate: $("#quickLinkCustomTemplate"),
+  interfaceLanguage: $("#interfaceLanguage"),
   payloadModes: [...document.querySelectorAll('input[name="viewportPayloadMode"]')],
   imagePrecision: $("#imagePrecision"), imagePrecisionRow: $("#imagePrecisionRow"),
 };
@@ -33,7 +81,7 @@ const state = {
   pdf: null, fileName: "", documentId: "", memory: null, pages: new Map(),
   analysisEnabled: true, analysisTimer: 0,
   regionSignatures: new Set(), inFlightSignatures: new Set(), resetCoverageDocuments: new Set(), coverageEpochs: new Map(), bubbleStack: [], selectingImage: false,
-  readerSettings: { focusHeight: 60, showFocusGuide: false, viewportPayloadMode: "image", imagePrecision: "balanced" }, textSelection: null,
+  readerSettings: { language: "zh", focusHeight: 60, showFocusGuide: false, viewportPayloadMode: "image", imagePrecision: "balanced", quickLinkProvider: "wiki", quickLinkCustomLabel: "自定义", quickLinkCustomTemplate: "" }, textSelection: null,
   analysisTasks: new Map(), nextAnalysisTaskId: 0, progressTimer: 0,
 };
 
@@ -60,6 +108,10 @@ ui.focusHeight.addEventListener("input", previewReaderSettings);
 ui.showFocusGuide.addEventListener("change", previewReaderSettings);
 ui.payloadModes.forEach((input) => input.addEventListener("change", previewReaderSettings));
 ui.imagePrecision.addEventListener("change", previewReaderSettings);
+ui.quickLinkProvider.addEventListener("change", previewReaderSettings);
+ui.quickLinkCustomLabel.addEventListener("input", previewReaderSettings);
+ui.quickLinkCustomTemplate.addEventListener("input", previewReaderSettings);
+ui.interfaceLanguage.addEventListener("change", previewReaderSettings);
 window.addEventListener("resize", () => { layoutBubbles(); updateFocusGuide(); scheduleAnalysis(); });
 document.addEventListener("keydown", handleKeydown);
 ui.viewer.addEventListener("mouseup", () => setTimeout(updateSelectionTools, 0));
@@ -68,6 +120,42 @@ document.addEventListener("selectionchange", () => {
   if (document.getSelection()?.isCollapsed) hideSelectionTools();
 });
 initializeViewer();
+
+function currentLanguage() {
+  return state.readerSettings.language === "en" ? "en" : "zh";
+}
+
+function t(zh, en) {
+  return currentLanguage() === "en" ? en : zh;
+}
+
+function localizeRuntimeText(value) {
+  const text = String(value ?? "");
+  if (currentLanguage() !== "en") return text;
+  return RUNTIME_EN.get(text) || text;
+}
+
+function applyInterfaceLanguage() {
+  const language = currentLanguage();
+  document.documentElement.lang = language === "en" ? "en" : "zh-CN";
+  document.querySelectorAll("[data-i18n]").forEach((element) => {
+    if (state.pdf && (element === ui.analysisState || element === ui.documentTitle)) return;
+    const value = UI_TEXT[language][element.dataset.i18n];
+    if (value) element.textContent = value;
+  });
+  ui.toggleAnalysis.title = t("暂停或继续智能标注", "Pause or resume smart annotation");
+  ui.resendViewport.title = t("清除当前视野的发送记录并重新识别", "Clear and resend the current viewport");
+  ui.exportMemory.title = t("导出当前 PDF memory", "Export the current PDF memory");
+  ui.settingsButton.title = t("API 设置", "API settings");
+  ui.understandImage.title = t("立即截取并理解当前视野", "Capture and understand the current viewport");
+  ui.selectionQuestion.title = t("noting 选中文本", "Run noting on selected text");
+  ui.quickLinkProvider.querySelector('option[value="custom"]').textContent = t("自定义", "Custom");
+  ui.quickLinkProvider.querySelector('option[value="cnki"]').textContent = t("知网", "CNKI");
+}
+
+function responseLanguageInstruction() {
+  return currentLanguage() === "en" ? " Write all explanatory text in English." : " 所有解释文本使用中文。";
+}
 
 async function initializeViewer() {
   await loadReaderSettings();
@@ -156,7 +244,7 @@ async function createPagePlaceholders() {
     element.dataset.page = String(pageNumber);
     element.style.width = `${viewport.width}px`;
     element.style.height = `${viewport.height}px`;
-    element.innerHTML = `<canvas></canvas><div class="text-map"></div><div class="annotation-layer"></div>`;
+    element.innerHTML = `<canvas></canvas><div class="sent-coverage-layer"></div><div class="text-map"></div><div class="annotation-layer"></div>`;
     ui.pages.append(element);
     const record = { pageNumber, page, viewport, element, canvas: element.querySelector("canvas"), textItems: [], rendered: false, rendering: null };
     state.pages.set(pageNumber, record);
@@ -212,6 +300,7 @@ async function renderPage(pageNumber) {
     });
     record.rendered = true;
     renderPageAnnotations(pageNumber);
+    renderSentCoverage(pageNumber);
     return record;
   })().catch((error) => {
     record.rendering = null;
@@ -366,6 +455,7 @@ async function noteSelectedText() {
   try {
     bumpCoverageEpoch(taskDocumentId, selected.page);
     const reservedCoverage = await taskMemory.resetAndReserveCoverage(selected.page, [selected.region.normalized[1], selected.region.normalized[3]]);
+    if (state.documentId === taskDocumentId) renderSentCoverage(selected.page);
     const includeImage = state.readerSettings.viewportPayloadMode === "image";
     selected.region.image = includeImage ? cropCanvas(selected.region.record.canvas, selected.region.normalized, state.readerSettings.imagePrecision) : null;
     if (state.documentId !== taskDocumentId) return;
@@ -387,7 +477,7 @@ async function noteSelectedBubbleText(selected) {
     const openBubbles = state.bubbleStack.map(({ title, explanation, context }) => ({ title, explanation, context }));
     setAnalysisProgress(taskId, 3, "气泡文本 noting 已发出", `${selected.quote.length} 个字符`);
     const response = await requestVision([
-      { role: "system", content: "你是学术阅读标注助手。对用户从解释气泡中选中的文字划分重点和需要解释的名词。只能引用给定 span_id，必须返回严格 JSON，不使用 Markdown。同一字符尽量只归入一个标注。" },
+      { role: "system", content: `你是学术阅读标注助手。对用户从解释气泡中选中的文字划分重点和需要解释的名词。只能引用给定 span_id，必须返回严格 JSON，不使用 Markdown。同一字符尽量只归入一个标注。${responseLanguageInstruction()}` },
       { role: "user", content: [
         { type: "text", text: `选中的气泡文本片段：${JSON.stringify([{ id: "selected", text: selected.quote }])}\n当前视野文本：${viewportRegion.spans.map((item) => item.text).join(" ")}\n已展开气泡：${JSON.stringify(openBubbles)}\n返回：{"annotations":[{"kind":"term|keypoint","targets":[{"span_id":"selected","start":0,"end":4}],"label":"原文名词或重点","explanation":"简洁解释","context":"与论文当前语境的关系","secondary_terms":[]}]}。start/end 是选中文本内的字符下标，end 不包含。` },
         { type: "image_url", image_url: { url: viewportRegion.image } },
@@ -471,6 +561,7 @@ async function resendCurrentViewport() {
       region.page,
       [region.normalized[1], region.normalized[3]],
     );
+    if (state.documentId === taskDocumentId) renderSentCoverage(region.page);
     toast("当前视野已重新标为已发送，正在重新识别");
     await analyzeCurrentRegion({ force: true, regionOverride: region, reservedCoverage });
   } catch (error) {
@@ -498,6 +589,7 @@ function bumpCoverageEpoch(documentId, page) {
 async function completeTaskCoverage(memory, documentId, page, intervals, taskEpoch) {
   if (getCoverageEpoch(documentId, page) !== taskEpoch) return false;
   await memory.completeCoverage(page, intervals);
+  if (state.documentId === documentId) renderSentCoverage(page);
   return true;
 }
 
@@ -576,6 +668,7 @@ async function analyzeCurrentRegion({ force = false, regionOverride = null, rese
           region.page,
           [region.normalized[1], region.normalized[3]],
         );
+        if (state.documentId === taskDocumentId) renderSentCoverage(region.page);
       }
       if (!coverageIntervals.length) {
         finishAnalysisProgress(taskId, "当前视野已发送或已完成 · 跳过识别", `第 ${region.page} 页 · 重叠区域已从本次任务中裁剪`, true);
@@ -624,7 +717,7 @@ async function analyzeCurrentRegion({ force = false, regionOverride = null, rese
     const response = await requestVision([
       {
         role: "system",
-        content: "你是学术PDF阅读助手。只分析用户当前视野。选择少量真正关键的重点和需要解释的专业名词。只要视野中存在完整、有语义的学术文本，就至少返回1个标注；只有目录、页眉页脚、参考文献编号或无实质语义内容时才能返回空数组。必须返回严格JSON，不使用Markdown。不要编造原文中不存在的span_id。",
+        content: `你是学术PDF阅读助手。只分析用户当前视野。选择少量真正关键的重点和需要解释的专业名词。只要视野中存在完整、有语义的学术文本，就至少返回1个标注；只有目录、页眉页脚、参考文献编号或无实质语义内容时才能返回空数组。必须返回严格JSON，不使用Markdown。不要编造原文中不存在的span_id。${responseLanguageInstruction()}`,
       },
       {
         role: "user",
@@ -707,7 +800,7 @@ async function repairAnnotations(annotations, region) {
   const response = await requestVision([
     {
       role: "system",
-      content: "你是JSON标注修复器。只能引用给定的span id。必须返回严格JSON，不使用Markdown。",
+      content: `你是JSON标注修复器。只能引用给定的span id。必须返回严格JSON，不使用Markdown。${responseLanguageInstruction()}`,
     },
     {
       role: "user",
@@ -818,6 +911,20 @@ function renderPageAnnotations(pageNumber) {
   }
 }
 
+function renderSentCoverage(pageNumber) {
+  const record = state.pages.get(pageNumber);
+  const layer = record?.element.querySelector(".sent-coverage-layer");
+  if (!layer || !state.memory) return;
+  layer.replaceChildren();
+  for (const [start, end] of state.memory.getSentCoverage(pageNumber)) {
+    const region = document.createElement("div");
+    region.className = "sent-coverage-region";
+    region.style.top = `${start * 100}%`;
+    region.style.height = `${Math.max(0, end - start) * 100}%`;
+    layer.append(region);
+  }
+}
+
 function findAnnotationsAtPoint(pageNumber, clientX, clientY, primary = null) {
   if (!clientX && !clientY) return primary ? [primary] : [];
   const record = state.pages.get(pageNumber);
@@ -868,7 +975,7 @@ function openAnnotationChooser(annotations, anchorRect) {
   chooser.className = "annotation-chooser";
   const heading = document.createElement("div");
   heading.className = "chooser-heading";
-  heading.innerHTML = `<strong>这里有多个标注</strong><button title="关闭">×</button>`;
+  heading.innerHTML = `<strong>${t("这里有多个标注", "Multiple annotations here")}</strong><button title="${t("关闭", "Close")}">×</button>`;
   heading.querySelector("button").addEventListener("click", closeBubbles);
   chooser.append(heading);
   for (const annotation of annotations) {
@@ -876,9 +983,9 @@ function openAnnotationChooser(annotations, anchorRect) {
     option.className = "annotation-option";
     const badge = document.createElement("span");
     badge.className = `annotation-badge ${annotation.kind}`;
-    badge.textContent = annotation.kind === "term" ? "名词" : "重点";
+    badge.textContent = annotation.kind === "term" ? t("名词", "Term") : t("重点", "Key point");
     const label = document.createElement("span");
-    label.textContent = annotation.content?.label || annotation.anchor?.quote || "查看解释";
+    label.textContent = annotation.content?.label || annotation.anchor?.quote || t("查看解释", "View explanation");
     option.append(badge, label);
     option.addEventListener("click", () => openAnnotationBubble(annotation, anchorRect));
     chooser.append(option);
@@ -895,8 +1002,8 @@ function openAnnotationChooser(annotations, anchorRect) {
 function openAnnotationBubble(annotation, anchorRect) {
   const bubble = {
     id: annotation.id,
-    title: annotation.content?.label || (annotation.kind === "image" ? "图片解释" : "解释"),
-    explanation: annotation.content?.explanation || "暂无解释",
+    title: annotation.content?.label || (annotation.kind === "image" ? t("图片解释", "Image explanation") : t("解释", "Explanation")),
+    explanation: annotation.content?.explanation || t("暂无解释", "No explanation yet"),
     context: annotation.content?.context || "",
     secondaryTerms: normalizeSecondaryTerms(annotation.content?.secondary_terms),
     annotation,
@@ -917,8 +1024,8 @@ function openChildBubble(parentIndex, term, sourceButton) {
   const bubble = {
     id: `child_${simpleHash(term.term)}`,
     title: term.term,
-    explanation: term.explanation || "点击右上角问号获取详细解释。",
-    context: term.parent_concept ? `上级概念：${term.parent_concept}` : "",
+    explanation: term.explanation || t("点击右上角问号获取详细解释。", "Use the question mark in the top-right for a detailed explanation."),
+    context: term.parent_concept ? `${t("上级概念", "Parent concept")}: ${term.parent_concept}` : "",
     secondaryTerms: normalizeSecondaryTerms(term.secondary_terms),
     isTerm: true,
     page: parent.page,
@@ -952,13 +1059,14 @@ function renderBubbles() {
     element.dataset.depth = String(actualIndex);
     element.dataset.bubbleIndex = String(actualIndex);
     const path = state.bubbleStack.slice(0, actualIndex + 1).map((item) => item.title).join(" › ");
-    element.innerHTML = `<div class="bubble-path"></div><div class="bubble-head"><h3></h3><button class="ask" title="结合当前PDF视野详细解释">?</button><button class="close" title="关闭">×</button></div><div class="bubble-body"></div>`;
+    element.innerHTML = `<div class="bubble-path"></div><div class="bubble-head"><h3></h3><button class="ask" title="${t("结合当前PDF视野详细解释", "Explain using the current PDF viewport")}">?</button><button class="close" title="${t("关闭", "Close")}">×</button></div><div class="bubble-body"></div>`;
     const pathElement = element.querySelector(".bubble-path");
     if (bubble.isTerm) {
+      const quickLink = buildQuickLink(bubble.title, state.readerSettings);
       const wikiLink = document.createElement("a");
       wikiLink.className = "bubble-wiki-link";
-      wikiLink.textContent = `wiki · ${bubble.title}`;
-      wikiLink.href = wikipediaSearchUrl(bubble.title);
+      wikiLink.textContent = `${quickLink.label} · ${bubble.title}`;
+      wikiLink.href = quickLink.url;
       wikiLink.target = "_blank";
       wikiLink.rel = "noopener noreferrer";
       pathElement.append(wikiLink);
@@ -973,7 +1081,7 @@ function renderBubbles() {
     ask.classList.toggle("saved", Boolean(bubble.questionEvent));
     ask.classList.toggle("loading", Boolean(bubble.questionLoading));
     ask.textContent = bubble.questionLoading ? "…" : "?";
-    ask.title = bubble.questionEvent ? "展开或收起已保存的追问" : "结合当前 PDF 视野追问";
+    ask.title = bubble.questionEvent ? t("展开或收起已保存的追问", "Expand or collapse the saved follow-up") : t("结合当前 PDF 视野追问", "Ask using the current PDF viewport");
     ask.disabled = Boolean(bubble.questionLoading);
     ask.addEventListener("click", () => handleBubbleQuestion(actualIndex, ask));
     element.querySelector(".close").addEventListener("click", () => {
@@ -1023,14 +1131,22 @@ function renderBubbleAnnotatedText(container, text, bubble, bubbleIndex, field, 
       else container.append(document.createTextNode(segment));
       continue;
     }
-    const mark = document.createElement("button");
+    const mark = document.createElement("span");
     mark.className = `bubble-note-mark ${[...new Set(active.map((annotation) => annotation.kind))].join(" ")}`;
+    mark.setAttribute("role", "button");
+    mark.tabIndex = 0;
     mark.textContent = segment;
     mark.title = active.map((annotation) => annotation.content?.label || annotation.anchor?.quote).join(" / ");
-    mark.addEventListener("click", () => {
+    const openMark = () => {
       const anchorRect = mark.getBoundingClientRect();
       if (active.length > 1) openBubbleNoteChooser(bubbleIndex, active, anchorRect);
       else openBubbleNote(bubbleIndex, active[0], anchorRect);
+    };
+    mark.addEventListener("click", openMark);
+    mark.addEventListener("keydown", (event) => {
+      if (!["Enter", " "].includes(event.key)) return;
+      event.preventDefault();
+      openMark();
     });
     container.append(mark);
   }
@@ -1079,11 +1195,6 @@ function openBubbleNoteChooser(bubbleIndex, annotations, anchorRect) {
   const top = clamp(anchorRect.bottom - 58 + 7, 12, window.innerHeight - 58 - chooser.offsetHeight - 12);
   chooser.style.left = `${left}px`;
   chooser.style.top = `${top}px`;
-}
-
-function wikipediaSearchUrl(term) {
-  const query = new URLSearchParams({ title: "Special:Search", search: String(term || "").trim(), fulltext: "1" });
-  return `https://zh.wikipedia.org/w/index.php?${query}`;
 }
 
 function appendTextWithTerms(container, text, terms, onClick) {
@@ -1183,7 +1294,7 @@ async function requestBubbleQuestion(bubble, anchorRect) {
     if (state.documentId !== taskDocumentId) throw new Error("PDF 已切换，本次追问已结束。");
     setAnalysisProgress(taskId, 2, "追问载荷已准备", `第 ${region.page} 页 · 当前视野截图 + ${region.spans.length} 个文本片段`);
     const response = await requestVision([
-      { role: "system", content: "你是严谨的学术概念导师。根据当前 PDF 视野和已展开概念链，详细解释目标概念。必须返回严格 JSON。" },
+      { role: "system", content: `你是严谨的学术概念导师。根据当前 PDF 视野和已展开概念链，详细解释目标概念。必须返回严格 JSON。${responseLanguageInstruction()}` },
       { role: "user", content: [
         { type: "text", text: `目标：${bubble.title}\n当前页面文本：${region.spans.map((item) => item.text).join(" ")}\n已展开气泡：${JSON.stringify(bubbleContext)}\n返回：{"label":"深入解释的短标题","explanation":"详细但清晰的解释","context":"它与当前论文内容的关系","secondary_terms":[{"term":"二级名词","explanation":"一句话解释","parent_concept":"上级概念"}]}` },
         { type: "image_url", image_url: { url: region.image } },
@@ -1270,7 +1381,7 @@ async function understandViewportImage(viewportRect) {
     const nearby = target.record.textItems.filter((item) => boxesIntersect(expandBox(box, .08), item.box)).map((item) => item.text).join(" ");
     const openBubbles = state.bubbleStack.map(({ title, explanation }) => ({ title, explanation }));
     const response = await requestVision([
-      { role: "system", content: "你是学术论文图片阅读助手。解释图的阅读顺序、元素含义、结论以及与附近正文的关系。必须返回严格JSON。" },
+      { role: "system", content: `你是学术论文图片阅读助手。解释图的阅读顺序、元素含义、结论以及与附近正文的关系。必须返回严格JSON。${responseLanguageInstruction()}` },
       { role: "user", content: [
         { type: "text", text: `附近正文：${nearby}\n当前展开概念：${JSON.stringify(openBubbles)}\n返回：{"label":"图片短标题","explanation":"清晰解释","context":"与论文当前内容的关系","secondary_terms":[{"term":"图中专业名词","explanation":"一句话解释","parent_concept":"上级概念"}]}` },
         { type: "image_url", image_url: { url: dataUrl } },
@@ -1309,7 +1420,12 @@ async function openSettings() {
   ui.showFocusGuide.checked = state.readerSettings.showFocusGuide;
   ui.payloadModes.forEach((input) => { input.checked = input.value === state.readerSettings.viewportPayloadMode; });
   ui.imagePrecision.value = state.readerSettings.imagePrecision;
+  ui.quickLinkProvider.value = state.readerSettings.quickLinkProvider;
+  ui.quickLinkCustomLabel.value = state.readerSettings.quickLinkCustomLabel;
+  ui.quickLinkCustomTemplate.value = state.readerSettings.quickLinkCustomTemplate;
+  ui.interfaceLanguage.value = state.readerSettings.language;
   updateImagePrecisionState();
+  updateQuickLinkCustomState();
   ui.apiTestResult.textContent = "";
   ui.apiTestResult.className = "api-test-result";
   ui.settingsDialog.showModal();
@@ -1415,20 +1531,30 @@ async function loadReaderSettings() {
   const stored = await chrome.storage.local.get(READER_SETTINGS_KEY);
   const value = stored[READER_SETTINGS_KEY] || {};
   state.readerSettings = {
+    language: value.language === "en" ? "en" : "zh",
     focusHeight: clamp(Number(value.focusHeight) || 60, 20, 100),
     showFocusGuide: Boolean(value.showFocusGuide),
     viewportPayloadMode: value.viewportPayloadMode === "text" ? "text" : "image",
     imagePrecision: IMAGE_PRECISION[value.imagePrecision] ? value.imagePrecision : "balanced",
+    ...normalizeQuickLinkSettings(value),
   };
+  applyInterfaceLanguage();
   updateFocusGuide();
 }
 
 async function saveReaderSettings() {
+  const quickLinkSettings = validateQuickLinkSettings(normalizeQuickLinkSettings({
+    quickLinkProvider: ui.quickLinkProvider.value,
+    quickLinkCustomLabel: ui.quickLinkCustomLabel.value,
+    quickLinkCustomTemplate: ui.quickLinkCustomTemplate.value,
+  }));
   state.readerSettings = {
+    language: ui.interfaceLanguage.value === "en" ? "en" : "zh",
     focusHeight: clamp(Number(ui.focusHeight.value) || 60, 20, 100),
     showFocusGuide: ui.showFocusGuide.checked,
     viewportPayloadMode: ui.payloadModes.find((input) => input.checked)?.value === "text" ? "text" : "image",
     imagePrecision: IMAGE_PRECISION[ui.imagePrecision.value] ? ui.imagePrecision.value : "balanced",
+    ...quickLinkSettings,
   };
   await chrome.storage.local.set({ [READER_SETTINGS_KEY]: state.readerSettings });
   updateFocusGuide();
@@ -1436,12 +1562,21 @@ async function saveReaderSettings() {
 
 function previewReaderSettings() {
   state.readerSettings.focusHeight = clamp(Number(ui.focusHeight.value) || 60, 20, 100);
+  state.readerSettings.language = ui.interfaceLanguage.value === "en" ? "en" : "zh";
   state.readerSettings.showFocusGuide = ui.showFocusGuide.checked;
   state.readerSettings.viewportPayloadMode = ui.payloadModes.find((input) => input.checked)?.value === "text" ? "text" : "image";
   state.readerSettings.imagePrecision = IMAGE_PRECISION[ui.imagePrecision.value] ? ui.imagePrecision.value : "balanced";
+  Object.assign(state.readerSettings, normalizeQuickLinkSettings({
+    quickLinkProvider: ui.quickLinkProvider.value,
+    quickLinkCustomLabel: ui.quickLinkCustomLabel.value,
+    quickLinkCustomTemplate: ui.quickLinkCustomTemplate.value,
+  }));
   ui.focusHeightValue.value = `${state.readerSettings.focusHeight}%`;
   updateImagePrecisionState();
+  updateQuickLinkCustomState();
+  applyInterfaceLanguage();
   updateFocusGuide();
+  if (state.bubbleStack.length) renderBubbles();
 }
 
 function updateImagePrecisionState() {
@@ -1450,13 +1585,17 @@ function updateImagePrecisionState() {
   ui.imagePrecisionRow.classList.toggle("disabled", !enabled);
 }
 
+function updateQuickLinkCustomState() {
+  ui.quickLinkCustom.classList.toggle("hidden", ui.quickLinkProvider.value !== "custom");
+}
+
 function beginAnalysisProgress() {
   const taskId = ++state.nextAnalysisTaskId;
   state.analysisTasks.set(taskId, {
     id: taskId,
     startedAt: performance.now(),
-    title: "准备理解当前视野",
-    detail: "等待当前视野稳定",
+    title: localizeRuntimeText("准备理解当前视野"),
+    detail: localizeRuntimeText("等待当前视野稳定"),
   });
   if (!state.progressTimer) state.progressTimer = setInterval(renderActiveAnalysisStatus, 100);
   renderActiveAnalysisStatus();
@@ -1466,8 +1605,8 @@ function beginAnalysisProgress() {
 function setAnalysisProgress(taskId, _step, title, detail) {
   const task = state.analysisTasks.get(taskId);
   if (!task) return;
-  task.title = title;
-  task.detail = detail;
+  task.title = localizeRuntimeText(title);
+  task.detail = localizeRuntimeText(detail);
   renderActiveAnalysisStatus();
 }
 
@@ -1480,8 +1619,8 @@ function finishAnalysisProgress(taskId, title, detail, success) {
     renderActiveAnalysisStatus();
   } else {
     stopAnalysisStatusTimer();
-    setStatus(`${title} · ${elapsed}s`, success ? "ready" : "");
-    ui.analysisState.title = detail;
+    setStatus(`${localizeRuntimeText(title)} · ${elapsed}s`, success ? "ready" : "");
+    ui.analysisState.title = localizeRuntimeText(detail);
   }
 }
 
@@ -1544,6 +1683,7 @@ function getFocusRect(viewerRect = ui.viewer.getBoundingClientRect()) {
 async function cancelSettings() {
   await loadReaderSettings();
   ui.settingsDialog.close();
+  if (state.bubbleStack.length) renderBubbles();
 }
 
 function updateFocusGuide() {
@@ -1579,12 +1719,12 @@ function boxesIntersect(a, b) { return Math.min(a[2], b[2]) > Math.max(a[0], b[0
 function expandBox([x1, y1, x2, y2], amount) { return [clamp(x1 - amount, 0, 1), clamp(y1 - amount, 0, 1), clamp(x2 + amount, 0, 1), clamp(y2 + amount, 0, 1)]; }
 function clamp(value, min, max) { return Math.min(max, Math.max(min, value)); }
 function simpleHash(value) { let hash = 2166136261; for (let index = 0; index < value.length; index += 1) { hash ^= value.charCodeAt(index); hash = Math.imul(hash, 16777619); } return (hash >>> 0).toString(36); }
-function setStatus(text, className = "") { ui.analysisState.textContent = text; ui.analysisState.className = `status ${className}`.trim(); ui.analysisState.title = ""; }
+function setStatus(text, className = "") { ui.analysisState.textContent = localizeRuntimeText(text); ui.analysisState.className = `status ${className}`.trim(); ui.analysisState.title = ""; }
 let toastTimer;
-function toast(message, error = false) { clearTimeout(toastTimer); ui.toast.textContent = message; ui.toast.className = `toast show${error ? " error" : ""}`; toastTimer = setTimeout(() => { ui.toast.className = "toast"; }, 4200); }
+function toast(message, error = false) { clearTimeout(toastTimer); ui.toast.textContent = localizeRuntimeText(message); ui.toast.className = `toast show${error ? " error" : ""}`; toastTimer = setTimeout(() => { ui.toast.className = "toast"; }, 4200); }
 function showError(title, error) {
   const detail = error?.message || String(error || "未知错误");
-  ui.errorTitle.textContent = title;
+  ui.errorTitle.textContent = localizeRuntimeText(title);
   ui.errorDetail.textContent = detail;
   ui.errorPanel.classList.remove("hidden");
   ui.errorPanel.title = detail;

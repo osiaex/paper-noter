@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Paper Memory Reader</title>
+    <link rel="stylesheet" href="viewer.css" />
+  </head>
+  <body>
+    <header class="toolbar">
+      <div class="brand"><span class="brand-mark">P</span><span>Paper Memory</span></div>
+      <div class="document-actions">
+        <button id="openFile" class="button primary">打开 PDF</button>
+        <input id="fileInput" type="file" accept="application/pdf,.pdf" hidden />
+        <span id="documentTitle" class="document-title">尚未打开论文</span>
+      </div>
+      <div class="toolbar-actions">
+        <span id="analysisState" class="status">等待 PDF</span>
+        <button id="toggleAnalysis" class="icon-button" title="暂停或继续智能标注" disabled>◉</button>
+        <button id="exportMemory" class="icon-button" title="导出当前 PDF memory" disabled>⇩</button>
+        <button id="settingsButton" class="icon-button" title="API 设置">⚙</button>
+      </div>
+    </header>
+
+    <main id="workspace" class="workspace empty">
+      <aside class="figure-rail">
+        <button id="understandImage" class="figure-button" title="框选并理解图片" disabled>
+          <span>▧</span><small>理解图片</small>
+        </button>
+      </aside>
+      <section id="viewer" class="viewer">
+        <div id="emptyState" class="empty-state">
+          <div class="empty-icon">PDF</div>
+          <h1>把论文放进来，专注眼前这一页</h1>
+          <p>只分析当前视野，用两种划线标出重点与名词。所有记忆保存在本地。</p>
+          <button id="emptyOpenFile" class="button primary">选择 PDF</button>
+        </div>
+        <div id="pages" class="pages"></div>
+        <div id="selectionOverlay" class="selection-overlay hidden"></div>
+      </section>
+      <div id="focusGuideMask" class="focus-guide-mask hidden" aria-hidden="true"><div id="focusGuide" class="focus-guide"></div></div>
+      <div id="bubbleLayer" class="bubble-layer"></div>
+    </main>
+
+    <dialog id="settingsDialog" class="settings-dialog">
+      <form id="settingsForm" method="dialog">
+        <div class="dialog-heading">
+          <div><small>连接模型</small><h2>API 设置</h2></div>
+          <button type="button" id="closeSettings" class="icon-button">×</button>
+        </div>
+        <label>OpenAI 兼容接口地址<input id="apiEndpoint" type="url" required placeholder="https://api.openai.com/v1 或完整 chat/completions 地址" /></label>
+        <label>模型名称<input id="apiModel" required placeholder="支持视觉输入的模型" /></label>
+        <label>API Key<input id="apiKey" type="password" required autocomplete="off" placeholder="sk-..." /></label>
+        <p class="privacy-note">Key 仅保存在浏览器本地。图片和当前视野文本只会在触发分析时发往你填写的接口。</p>
+        <section class="settings-section">
+          <div class="section-title"><strong>视野范围</strong><output id="focusHeightValue">60%</output></div>
+          <input id="focusHeight" class="range-input" type="range" min="20" max="100" step="5" value="60" />
+          <div class="range-labels"><span>更快 · 20%</span><span>更多上下文 · 100%</span></div>
+          <label class="checkbox-label"><input id="showFocusGuide" type="checkbox" /><span>显示视野边框，并稍微调暗视野外内容</span></label>
+        </section>
+        <div id="apiTestResult" class="api-test-result" aria-live="polite"></div>
+        <div class="dialog-actions"><button type="button" id="testApi" class="button">测试连接</button><span class="dialog-spacer"></span><button type="button" id="cancelSettings" class="button">取消</button><button type="submit" class="button primary">保存</button></div>
+      </form>
+    </dialog>
+
+    <aside id="errorPanel" class="error-panel hidden" role="alert">
+      <div><strong id="errorTitle">分析失败</strong><p id="errorDetail"></p></div>
+      <button id="errorSettings" class="button">检查 API 设置</button>
+      <button id="dismissError" class="icon-button" title="关闭">×</button>
+    </aside>
+    <div id="toast" class="toast" role="status"></div>
+    <script type="module" src="viewer.js"></script>
+  </body>
+</html>

@@ -1,0 +1,13 @@
+{
+  "name": "paper-memory-reader",
+  "version": "0.1.5",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "check": "node --check src/viewer.js && node --check src/background.js && node --check src/memory.js && node --check src/api.js && node --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "pdfjs-dist": "^5.4.149"
+  }
+}

@@ -16,6 +16,10 @@ await cp(
   resolve(root, "node_modules/pdfjs-dist/build/pdf.worker.mjs"),
   resolve(dist, "vendor/pdf.worker.mjs"),
 );
+await mkdir(resolve(dist, "vendor/katex"), { recursive: true });
+await cp(resolve(root, "node_modules/katex/dist/katex.mjs"), resolve(dist, "vendor/katex/katex.mjs"));
+await cp(resolve(root, "node_modules/katex/dist/katex.min.css"), resolve(dist, "vendor/katex/katex.min.css"));
+await cp(resolve(root, "node_modules/katex/dist/fonts"), resolve(dist, "vendor/katex/fonts"), { recursive: true });
 for (const directory of ["cmaps", "standard_fonts", "wasm", "iccs"]) {
   await cp(resolve(root, `node_modules/pdfjs-dist/${directory}`), resolve(dist, `vendor/${directory}`), { recursive: true });
 }

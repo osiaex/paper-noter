@@ -4,6 +4,8 @@ import { PaperMemory, sha256 } from "./memory.js";
 import { pdfFileName } from "./pdf-routing.js";
 import { intervalLength } from "./coverage.js";
 import { buildQuickLink, normalizeQuickLinkSettings, validateQuickLinkSettings } from "./quick-links.js";
+import { tokenizeMath } from "./math.js";
+import { render as renderMath } from "./vendor/katex/katex.mjs";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = chrome.runtime.getURL("vendor/pdf.worker.mjs");
 
@@ -85,7 +87,7 @@ const state = {
   analysisEnabled: true, analysisTimer: 0,
   regionSignatures: new Set(), inFlightSignatures: new Set(), resetCoverageDocuments: new Set(), coverageEpochs: new Map(), bubbleStack: [], activeImageTasks: 0,
   readerSettings: { language: "zh", focusHeight: 60, showFocusGuide: false, viewportPayloadMode: "image", imagePrecision: "balanced", quickLinkProvider: "wiki", quickLinkCustomLabel: "自定义", quickLinkCustomTemplate: "" }, textSelection: null,
-  analysisTasks: new Map(), nextAnalysisTaskId: 0, progressTimer: 0,
+  analysisTasks: new Map(), questionTasks: new Map(), nextAnalysisTaskId: 0, progressTimer: 0,
 };
 
 ui.openFile.addEventListener("click", () => ui.fileInput.click());
@@ -415,11 +417,10 @@ function buildBubbleTextSelection(range) {
   const bubble = state.bubbleStack[bubbleIndex];
   const field = fieldElement.dataset.bubbleField;
   const sourceText = String(bubble?.[field] || "");
-  const prefixRange = range.cloneRange();
-  prefixRange.selectNodeContents(fieldElement);
-  prefixRange.setEnd(range.startContainer, range.startOffset);
-  let fieldStart = prefixRange.toString().length;
-  let fieldEnd = fieldStart + range.toString().length;
+  let fieldStart = bubbleSourceOffset(fieldElement, range.startContainer, range.startOffset, "start");
+  let fieldEnd = bubbleSourceOffset(fieldElement, range.endContainer, range.endOffset, "end");
+  if (fieldStart === null || fieldEnd === null) return null;
+  if (fieldEnd < fieldStart) [fieldStart, fieldEnd] = [fieldEnd, fieldStart];
   const rawQuote = sourceText.slice(fieldStart, fieldEnd);
   const leading = rawQuote.length - rawQuote.trimStart().length;
   const trailing = rawQuote.length - rawQuote.trimEnd().length;
@@ -441,6 +442,27 @@ function buildBubbleTextSelection(range) {
     anchorRect: { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height },
     parentBubble: bubble,
   };
+}
+
+function bubbleSourceOffset(fieldElement, container, offset, edge) {
+  let sourceElement = (container.nodeType === Node.ELEMENT_NODE ? container : container.parentElement)?.closest?.("[data-source-start]");
+  if (!sourceElement || !fieldElement.contains(sourceElement)) {
+    const child = edge === "start" ? fieldElement.childNodes[offset] : fieldElement.childNodes[Math.max(0, offset - 1)];
+    sourceElement = child?.nodeType === Node.ELEMENT_NODE ? child.closest?.("[data-source-start]") || child.querySelector?.("[data-source-start]") : child?.parentElement?.closest?.("[data-source-start]");
+  }
+  if (!sourceElement || !fieldElement.contains(sourceElement)) return edge === "start" ? 0 : String(fieldElement.textContent || "").length;
+  const start = Number(sourceElement.dataset.sourceStart);
+  const end = Number(sourceElement.dataset.sourceEnd);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+  if (sourceElement.classList.contains("bubble-math")) return edge === "start" ? start : end;
+  try {
+    const prefix = document.createRange();
+    prefix.selectNodeContents(sourceElement);
+    prefix.setEnd(container, offset);
+    return clamp(start + prefix.toString().length, start, end);
+  } catch {
+    return edge === "start" ? start : end;
+  }
 }
 
 function selectionBoundaryOffset(element, container, offset, length) {
@@ -1051,11 +1073,23 @@ function questionBindingKey(rootAnnotationId, conceptPath) {
   return JSON.stringify([rootAnnotationId || "", ...(conceptPath || [])]);
 }
 
+function questionTaskKey(documentId, binding) {
+  return `${documentId}:${binding}`;
+}
+
 function hydrateBubbleQuestion(bubble) {
   bubble.questionBinding = questionBindingKey(bubble.rootAnnotationId, bubble.conceptPath);
   bubble.questionEvent = state.memory?.getQuestion(bubble.questionBinding) || null;
-  bubble.questionLoading = false;
+  bubble.questionLoading = state.questionTasks.has(questionTaskKey(state.documentId, bubble.questionBinding));
   return bubble;
+}
+
+function syncOpenBubbleQuestion(binding, { event = undefined, loading = undefined } = {}) {
+  for (const openBubble of state.bubbleStack) {
+    if (openBubble.questionBinding !== binding) continue;
+    if (event !== undefined) openBubble.questionEvent = event;
+    if (loading !== undefined) openBubble.questionLoading = loading;
+  }
 }
 
 function renderBubbles() {
@@ -1150,15 +1184,14 @@ function renderBubbleAnnotatedText(container, text, bubble, bubbleIndex, field, 
     const segment = value.slice(start, end);
     const active = annotations.filter((annotation) => annotation.anchor.start < end && annotation.anchor.end > start);
     if (!active.length) {
-      if (includeSecondaryTerms) appendTextWithTerms(container, segment, bubble.secondaryTerms, (term, button) => openChildBubble(bubbleIndex, term, button));
-      else container.append(document.createTextNode(segment));
+      appendRichBubbleText(container, segment, start, includeSecondaryTerms ? bubble.secondaryTerms : [], (term, button) => openChildBubble(bubbleIndex, term, button));
       continue;
     }
     const mark = document.createElement("span");
     mark.className = `bubble-note-mark ${[...new Set(active.map((annotation) => annotation.kind))].join(" ")}`;
     mark.setAttribute("role", "button");
     mark.tabIndex = 0;
-    mark.textContent = segment;
+    appendRichBubbleText(mark, segment, start, [], null);
     mark.title = active.map((annotation) => annotation.content?.label || annotation.anchor?.quote).join(" / ");
     const openMark = () => {
       const anchorRect = mark.getBoundingClientRect();
@@ -1172,6 +1205,27 @@ function renderBubbleAnnotatedText(container, text, bubble, bubbleIndex, field, 
       openMark();
     });
     container.append(mark);
+  }
+}
+
+function appendRichBubbleText(container, text, baseOffset, terms, onTermClick) {
+  for (const token of tokenizeMath(text)) {
+    const segment = document.createElement("span");
+    segment.dataset.sourceStart = String(baseOffset + token.start);
+    segment.dataset.sourceEnd = String(baseOffset + token.end);
+    if (token.type === "math") {
+      segment.className = `bubble-math${token.displayMode ? " display" : " inline"}`;
+      segment.dataset.mathSource = token.value;
+      segment.title = token.value;
+      renderMath(token.expression, segment, { displayMode: token.displayMode, throwOnError: false, strict: "ignore", trust: false, output: "htmlAndMathml" });
+    } else if (terms?.length && onTermClick) {
+      segment.className = "bubble-source-segment";
+      appendTextWithTerms(segment, token.value, terms, onTermClick);
+    } else {
+      segment.className = "bubble-source-segment";
+      segment.textContent = token.value;
+    }
+    container.append(segment);
   }
 }
 
@@ -1304,11 +1358,15 @@ function openQuestionBubble(parentIndex, anchorRect) {
 }
 
 async function requestBubbleQuestion(bubble, anchorRect) {
-  const taskId = beginAnalysisProgress();
   const taskMemory = state.memory;
   const taskDocumentId = state.documentId;
+  const binding = bubble.questionBinding;
+  const registryKey = questionTaskKey(taskDocumentId, binding);
+  if (state.questionTasks.has(registryKey)) return;
+  const taskId = beginAnalysisProgress();
+  state.questionTasks.set(registryKey, { taskId, binding, documentId: taskDocumentId });
   const bubbleContext = state.bubbleStack.map(({ title, explanation, context }) => ({ title, explanation, context }));
-  bubble.questionLoading = true;
+  syncOpenBubbleQuestion(binding, { loading: true });
   renderBubbles();
   try {
     setAnalysisProgress(taskId, 0, "正在捕捉追问上下文", `目标：${bubble.title}`);
@@ -1327,9 +1385,9 @@ async function requestBubbleQuestion(bubble, anchorRect) {
     const data = parseJsonResponse(extractAssistantText(response));
     const saved = await taskMemory.append({
       event: "bubble_question_upsert",
-      id: `question_${simpleHash(bubble.questionBinding)}`,
+      id: `question_${simpleHash(binding)}`,
       page: region.page,
-      binding_key: bubble.questionBinding,
+      binding_key: binding,
       parent_annotation_id: bubble.rootAnnotationId,
       parent_bubble_id: bubble.id,
       concept_path: bubble.conceptPath,
@@ -1342,18 +1400,24 @@ async function requestBubbleQuestion(bubble, anchorRect) {
       source: "manual_question_mllm",
     });
     if (state.documentId !== taskDocumentId) return;
-    bubble.questionEvent = saved;
-    bubble.questionLoading = false;
+    state.questionTasks.delete(registryKey);
+    syncOpenBubbleQuestion(binding, { event: saved, loading: false });
     finishAnalysisProgress(taskId, "追问已保存", `已绑定到“${bubble.title}”`, true);
-    const currentIndex = state.bubbleStack.indexOf(bubble);
-    if (currentIndex >= 0) openQuestionBubble(currentIndex, anchorRect);
+    const currentIndex = state.bubbleStack.findIndex((item) => item.questionBinding === binding);
+    if (currentIndex >= 0) {
+      const currentButton = ui.bubbleLayer.querySelector(`.concept-bubble[data-bubble-index="${currentIndex}"] .ask`);
+      openQuestionBubble(currentIndex, currentButton?.getBoundingClientRect() || anchorRect);
+    }
   } catch (error) {
     console.error(error);
-    bubble.questionLoading = false;
+    state.questionTasks.delete(registryKey);
+    syncOpenBubbleQuestion(binding, { loading: false });
     failAnalysisProgress(taskId, error);
     toast(error.message, true);
     if (state.documentId === taskDocumentId) renderBubbles();
   } finally {
+    if (state.questionTasks.get(registryKey)?.taskId === taskId) state.questionTasks.delete(registryKey);
+    if (state.documentId === taskDocumentId && !state.questionTasks.has(registryKey)) syncOpenBubbleQuestion(binding, { loading: false });
     if (state.analysisTasks.has(taskId)) finishAnalysisProgress(taskId, "追问任务结束", "未保存追问结果", false);
   }
 }

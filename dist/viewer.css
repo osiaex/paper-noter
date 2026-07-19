@@ -131,6 +131,10 @@ button { color: inherit; }
 .bubble-note-mark.keypoint { border-bottom: 2px solid var(--keypoint); }
 .bubble-note-mark:hover { background: rgba(48,118,201,.07); }
 .bubble-note-mark:focus-visible { outline: 1.5px solid currentColor; outline-offset: 2px; border-radius: 2px; }
+.bubble-math.inline { display: inline-block; max-width: 100%; margin: 0 .08em; vertical-align: -.08em; }
+.bubble-math.display { display: block; max-width: 100%; overflow-x: auto; overflow-y: hidden; padding: .12em 0; }
+.bubble-math .katex-display { margin: .55em 0; }
+.bubble-math .katex { font-size: 1.04em; }
 .bubble-loading { color: var(--muted); }
 
 .settings-dialog { width: min(520px, calc(100vw - 30px)); max-height: calc(100vh - 30px); padding: 0; overflow: auto; border: 1px solid var(--line); border-radius: 18px; box-shadow: var(--shadow); }

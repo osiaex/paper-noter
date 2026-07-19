@@ -1,6 +1,6 @@
 {
   "name": "paper-memory-reader",
-  "version": "0.5.20",
+  "version": "0.5.22",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,6 +8,7 @@
     "check": "node --check src/viewer.js && node --check src/background.js && node --check src/memory.js && node --check src/api.js && node --test tests/*.test.mjs"
   },
   "dependencies": {
+    "katex": "^0.18.1",
     "pdfjs-dist": "^5.4.149"
   }
 }

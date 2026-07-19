@@ -1089,8 +1089,22 @@ function renderBubbles() {
     const ask = element.querySelector(".ask");
     ask.classList.toggle("saved", Boolean(bubble.questionEvent));
     ask.classList.toggle("loading", Boolean(bubble.questionLoading));
-    ask.textContent = bubble.questionLoading ? "…" : "?";
-    ask.title = bubble.questionEvent ? t("展开或收起已保存的追问", "Expand or collapse the saved follow-up") : t("结合当前 PDF 视野追问", "Ask using the current PDF viewport");
+    if (bubble.questionLoading) {
+      ask.replaceChildren(...[0, 1, 2].map(() => {
+        const dot = document.createElement("span");
+        dot.className = "ask-dot";
+        dot.textContent = ".";
+        dot.setAttribute("aria-hidden", "true");
+        return dot;
+      }));
+      ask.setAttribute("aria-label", t("追问处理中", "Processing follow-up"));
+    } else {
+      ask.textContent = "?";
+      ask.setAttribute("aria-label", bubble.questionEvent ? t("展开或收起已保存的追问", "Expand or collapse the saved follow-up") : t("结合当前 PDF 视野追问", "Ask using the current PDF viewport"));
+    }
+    ask.title = bubble.questionLoading
+      ? t("API 正在处理追问", "The API is processing the follow-up")
+      : bubble.questionEvent ? t("展开或收起已保存的追问", "Expand or collapse the saved follow-up") : t("结合当前 PDF 视野追问", "Ask using the current PDF viewport");
     ask.disabled = Boolean(bubble.questionLoading);
     ask.addEventListener("click", () => handleBubbleQuestion(actualIndex, ask));
     element.querySelector(".close").addEventListener("click", () => {

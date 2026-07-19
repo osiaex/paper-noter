@@ -76,5 +76,50 @@ export function parseJsonResponse(text) {
   if (firstObject < 0 || lastObject < firstObject) {
     throw new Error("模型没有返回 JSON 对象。 ");
   }
-  return JSON.parse(cleaned.slice(firstObject, lastObject + 1));
+  const candidate = cleaned.slice(firstObject, lastObject + 1);
+  try {
+    return JSON.parse(candidate);
+  } catch (strictError) {
+    const repaired = repairJsonStringEscapes(candidate);
+    if (repaired === candidate) throw strictError;
+    return JSON.parse(repaired);
+  }
+}
+
+function repairJsonStringEscapes(source) {
+  let repaired = "";
+  let inString = false;
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index];
+    if (character === '"') {
+      inString = !inString;
+      repaired += character;
+      continue;
+    }
+    if (!inString) {
+      repaired += character;
+      continue;
+    }
+    if (character === "\n") { repaired += "\\n"; continue; }
+    if (character === "\r") { repaired += "\\r"; continue; }
+    if (character === "\t") { repaired += "\\t"; continue; }
+    if (character !== "\\") {
+      repaired += character;
+      continue;
+    }
+
+    const escape = source[index + 1];
+    if ('"\\/bfnrt'.includes(escape)) {
+      repaired += `\\${escape}`;
+      index += 1;
+      continue;
+    }
+    if (escape === "u" && /^[0-9a-fA-F]{4}$/.test(source.slice(index + 2, index + 6))) {
+      repaired += source.slice(index, index + 6);
+      index += 5;
+      continue;
+    }
+    repaired += "\\\\";
+  }
+  return repaired;
 }

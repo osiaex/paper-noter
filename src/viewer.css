@@ -111,7 +111,15 @@ button { color: inherit; }
 .bubble-head button { flex: none; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 8px; background: #edf1ee; cursor: pointer; }
 .bubble-head .ask { color: inherit; background: transparent; }
 .bubble-head .ask.saved { color: var(--paper); background: var(--term); }
-.bubble-head .ask.loading { color: var(--term); cursor: wait; }
+.bubble-head .ask.loading { display: inline-flex; align-items: center; justify-content: center; gap: 1px; color: var(--term); cursor: wait; }
+.ask-dot { display: inline-block; line-height: 1; animation: ask-dot-hop .9s ease-in-out infinite; }
+.ask-dot:nth-child(2) { animation-delay: .12s; }
+.ask-dot:nth-child(3) { animation-delay: .24s; }
+@keyframes ask-dot-hop {
+  0%, 55%, 100% { transform: translateY(0); }
+  27% { transform: translateY(-3px); }
+}
+@media (prefers-reduced-motion: reduce) { .ask-dot { animation: none; } }
 .bubble-path { margin-bottom: 9px; color: var(--muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .bubble-wiki-link { color: inherit; text-decoration: none; }
 .bubble-wiki-link:hover, .bubble-wiki-link:focus-visible { color: var(--term); text-decoration: underline; text-underline-offset: 2px; }

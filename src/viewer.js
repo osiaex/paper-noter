@@ -66,6 +66,7 @@ const RUNTIME_EN = new Map([
   ["设置已保存在本地", "Settings saved locally"], ["未知错误", "Unknown error"],
 ]);
 const ui = {
+  toolbar: document.querySelector(".toolbar"),
   workspace: $("#workspace"), viewer: $("#viewer"), pages: $("#pages"), fileInput: $("#fileInput"),
   openFile: $("#openFile"), emptyOpenFile: $("#emptyOpenFile"), documentTitle: $("#documentTitle"),
   analysisState: $("#analysisState"), toggleAnalysis: $("#toggleAnalysis"), resendViewport: $("#resendViewport"), exportMemory: $("#exportMemory"),
@@ -360,7 +361,7 @@ function updateSelectionTools() {
   const preferredTop = selected.anchorRect.top - height - 8;
   const top = preferredTop >= 62 ? preferredTop : selected.anchorRect.bottom + 8;
   ui.selectionTools.style.left = `${left}px`;
-  ui.selectionTools.style.top = `${clamp(top, 62, window.innerHeight - height - 8)}px`;
+  ui.selectionTools.style.top = `${clamp(top, toolbarHeight() + 4, window.innerHeight - height - 8)}px`;
 }
 
 function hideSelectionTools() {
@@ -1025,7 +1026,8 @@ function openAnnotationChooser(annotations, anchorRect) {
   const width = chooser.offsetWidth;
   const height = chooser.offsetHeight;
   const left = clamp(anchorRect.right + 9, 12, window.innerWidth - width - 12);
-  const top = clamp(anchorRect.bottom - 58 + 7, 12, window.innerHeight - 58 - height - 12);
+  const headerHeight = toolbarHeight();
+  const top = clamp(anchorRect.bottom - headerHeight + 7, 12, window.innerHeight - headerHeight - height - 12);
   chooser.style.left = `${left}px`;
   chooser.style.top = `${top}px`;
 }
@@ -1269,7 +1271,8 @@ function openBubbleNoteChooser(bubbleIndex, annotations, anchorRect) {
   }
   ui.bubbleLayer.append(chooser);
   const left = clamp(anchorRect.right + 9, 12, window.innerWidth - chooser.offsetWidth - 12);
-  const top = clamp(anchorRect.bottom - 58 + 7, 12, window.innerHeight - 58 - chooser.offsetHeight - 12);
+  const headerHeight = toolbarHeight();
+  const top = clamp(anchorRect.bottom - headerHeight + 7, 12, window.innerHeight - headerHeight - chooser.offsetHeight - 12);
   chooser.style.left = `${left}px`;
   chooser.style.top = `${top}px`;
 }
@@ -1303,11 +1306,12 @@ function layoutBubbles() {
     const width = element.offsetWidth;
     const height = element.offsetHeight;
     let left = index === 0 ? bubble.anchorRect.right + 10 : previousRect.right + 10;
-    let top = index === 0 ? bubble.anchorRect.top - 58 : previousRect.top + 16;
+    const headerHeight = toolbarHeight();
+    let top = index === 0 ? bubble.anchorRect.top - headerHeight : previousRect.top + 16;
     if (left + width > window.innerWidth - 12) {
       left = index === 0 ? bubble.anchorRect.left - width - 10 : Math.max(12, previousRect.left - width - 10);
     }
-    top = clamp(top, 12, window.innerHeight - 58 - height - 12);
+    top = clamp(top, 12, window.innerHeight - headerHeight - height - 12);
     left = clamp(left, 12, window.innerWidth - width - 12);
     element.style.left = `${left}px`;
     element.style.top = `${top}px`;
@@ -1773,6 +1777,10 @@ function formatBytes(bytes) {
 
 function precisionLabel(value) {
   return value === "low" ? "低精度" : value === "high" ? "高精度" : "标准精度";
+}
+
+function toolbarHeight() {
+  return ui.toolbar?.getBoundingClientRect().height || 58;
 }
 
 function getFocusRect(viewerRect = ui.viewer.getBoundingClientRect()) {

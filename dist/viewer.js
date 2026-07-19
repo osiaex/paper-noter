@@ -1,28 +1,40 @@
 import * as pdfjsLib from "./vendor/pdf.mjs";
 import { extractAssistantText, loadApiSettings, parseJsonResponse, requestVision, saveApiSettings } from "./api.js";
 import { PaperMemory, sha256 } from "./memory.js";
+import { pdfFileName } from "./pdf-routing.js";
+import { intervalLength } from "./coverage.js";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = chrome.runtime.getURL("vendor/pdf.worker.mjs");
 
 const $ = (selector) => document.querySelector(selector);
 const READER_SETTINGS_KEY = "paperMemoryReaderSettings";
+const VIEWPORT_SETTLE_MS = 500;
+const IMAGE_PRECISION = {
+  low: { maxSide: 768, quality: .58 },
+  balanced: { maxSide: 1152, quality: .72 },
+  high: { maxSide: 1600, quality: .86 },
+};
 const ui = {
   workspace: $("#workspace"), viewer: $("#viewer"), pages: $("#pages"), fileInput: $("#fileInput"),
   openFile: $("#openFile"), emptyOpenFile: $("#emptyOpenFile"), documentTitle: $("#documentTitle"),
-  analysisState: $("#analysisState"), toggleAnalysis: $("#toggleAnalysis"), exportMemory: $("#exportMemory"),
-  understandImage: $("#understandImage"), selectionOverlay: $("#selectionOverlay"), bubbleLayer: $("#bubbleLayer"),
+  analysisState: $("#analysisState"), toggleAnalysis: $("#toggleAnalysis"), resendViewport: $("#resendViewport"), exportMemory: $("#exportMemory"),
+  understandImage: $("#understandImage"), bubbleLayer: $("#bubbleLayer"),
   settingsButton: $("#settingsButton"), settingsDialog: $("#settingsDialog"), settingsForm: $("#settingsForm"),
   apiEndpoint: $("#apiEndpoint"), apiModel: $("#apiModel"), apiKey: $("#apiKey"), toast: $("#toast"),
   apiTestResult: $("#apiTestResult"), errorPanel: $("#errorPanel"), errorTitle: $("#errorTitle"), errorDetail: $("#errorDetail"),
   focusHeight: $("#focusHeight"), focusHeightValue: $("#focusHeightValue"), showFocusGuide: $("#showFocusGuide"),
   focusGuideMask: $("#focusGuideMask"), focusGuide: $("#focusGuide"),
+  selectionTools: $("#selectionTools"), selectionQuestion: $("#selectionQuestion"),
+  payloadModes: [...document.querySelectorAll('input[name="viewportPayloadMode"]')],
+  imagePrecision: $("#imagePrecision"), imagePrecisionRow: $("#imagePrecisionRow"),
 };
 
 const state = {
   pdf: null, fileName: "", documentId: "", memory: null, pages: new Map(),
-  analysisEnabled: true, analysisBusy: false, analysisTimer: 0, viewportRevision: 0, pendingAnalysis: false,
-  regionSignatures: new Set(), bubbleStack: [], selectingImage: false,
-  readerSettings: { focusHeight: 60, showFocusGuide: false },
+  analysisEnabled: true, analysisTimer: 0,
+  regionSignatures: new Set(), inFlightSignatures: new Set(), resetCoverageDocuments: new Set(), coverageEpochs: new Map(), bubbleStack: [], selectingImage: false,
+  readerSettings: { focusHeight: 60, showFocusGuide: false, viewportPayloadMode: "image", imagePrecision: "balanced" }, textSelection: null,
+  analysisTasks: new Map(), nextAnalysisTaskId: 0, progressTimer: 0,
 };
 
 ui.openFile.addEventListener("click", () => ui.fileInput.click());
@@ -37,15 +49,53 @@ $("#testApi").addEventListener("click", testApiConnection);
 $("#errorSettings").addEventListener("click", openSettings);
 $("#dismissError").addEventListener("click", clearError);
 ui.toggleAnalysis.addEventListener("click", toggleAnalysis);
+ui.resendViewport.addEventListener("click", resendCurrentViewport);
 ui.exportMemory.addEventListener("click", exportMemory);
-ui.understandImage.addEventListener("click", beginImageSelection);
-ui.viewer.addEventListener("scroll", scheduleAnalysis, { passive: true });
+ui.understandImage.addEventListener("click", understandCurrentViewportImage);
+ui.selectionQuestion.addEventListener("pointerdown", (event) => event.preventDefault());
+ui.selectionQuestion.addEventListener("click", noteSelectedText);
+ui.viewer.addEventListener("scroll", handleViewerScroll, { passive: true });
 ui.viewer.addEventListener("scroll", updateFocusGuide, { passive: true });
 ui.focusHeight.addEventListener("input", previewReaderSettings);
 ui.showFocusGuide.addEventListener("change", previewReaderSettings);
+ui.payloadModes.forEach((input) => input.addEventListener("change", previewReaderSettings));
+ui.imagePrecision.addEventListener("change", previewReaderSettings);
 window.addEventListener("resize", () => { layoutBubbles(); updateFocusGuide(); scheduleAnalysis(); });
 document.addEventListener("keydown", handleKeydown);
-loadReaderSettings();
+ui.viewer.addEventListener("mouseup", () => setTimeout(updateSelectionTools, 0));
+ui.bubbleLayer.addEventListener("mouseup", () => setTimeout(updateSelectionTools, 0));
+document.addEventListener("selectionchange", () => {
+  if (document.getSelection()?.isCollapsed) hideSelectionTools();
+});
+initializeViewer();
+
+async function initializeViewer() {
+  await loadReaderSettings();
+  const source = new URLSearchParams(location.search).get("source");
+  if (source) await openPdfFromUrl(source);
+}
+
+async function openPdfFromUrl(source) {
+  try {
+    setStatus("正在直接加载 PDF…", "working");
+    if (source.startsWith("file:")) {
+      const allowed = await chrome.extension.isAllowedFileSchemeAccess();
+      if (!allowed) throw new Error("请在 chrome://extensions 的插件详情中开启“允许访问文件网址”，然后重新打开本地 PDF。 ");
+    }
+    const response = await fetch(source, { credentials: "include", cache: "default" });
+    if (!response.ok && response.status !== 0) throw new Error(`PDF 下载失败：HTTP ${response.status} ${response.statusText}`);
+    const contentType = response.headers.get("content-type") || "";
+    const buffer = await response.arrayBuffer();
+    if (!buffer.byteLength) throw new Error("PDF 响应内容为空。 ");
+    const name = pdfFileName(source, response.headers.get("content-disposition") || "");
+    const file = new File([buffer], name, { type: contentType || "application/pdf" });
+    await openPdf(file);
+  } catch (error) {
+    console.error(error);
+    setStatus("直接加载失败");
+    showError("无法直接打开 PDF", error);
+  }
+}
 
 async function openPdf(file) {
   try {
@@ -71,6 +121,10 @@ async function openPdf(file) {
       pageCount: state.pdf.numPages,
       updatedAt: new Date().toISOString(),
     });
+    if (!state.resetCoverageDocuments.has(state.documentId)) {
+      await state.memory.resetSentCoverage();
+      state.resetCoverageDocuments.add(state.documentId);
+    }
 
     for (const event of state.memory.events) {
       if (event.region_signature) state.regionSignatures.add(event.region_signature);
@@ -79,6 +133,7 @@ async function openPdf(file) {
     ui.workspace.classList.remove("empty");
     ui.documentTitle.textContent = file.name;
     ui.toggleAnalysis.disabled = false;
+    ui.resendViewport.disabled = false;
     ui.exportMemory.disabled = false;
     ui.understandImage.disabled = false;
     setStatus("本地 memory 已加载", "ready");
@@ -134,6 +189,7 @@ async function renderPage(pageNumber) {
 
     const textContent = await record.page.getTextContent();
     const textMap = record.element.querySelector(".text-map");
+    textMap.addEventListener("click", (event) => handleTextMapAnnotationClick(pageNumber, event));
     record.textItems = textContent.items.filter((item) => item.str?.trim()).map((item, index) => {
       const transform = pdfjsLib.Util.transform(record.viewport.transform, item.transform);
       const fontHeight = Math.max(5, Math.hypot(transform[2], transform[3]));
@@ -144,11 +200,13 @@ async function renderPage(pageNumber) {
       const span = document.createElement("span");
       span.className = "text-item";
       span.textContent = item.str;
+      span.dataset.spanId = `p${pageNumber}s${index}`;
       Object.assign(span.style, { left: `${left}px`, top: `${top}px`, width: `${width}px`, height: `${height}px`, fontSize: `${fontHeight}px` });
       textMap.append(span);
       return {
         id: `p${pageNumber}s${index}`,
         text: item.str,
+        element: span,
         box: [left / record.viewport.width, top / record.viewport.height, (left + width) / record.viewport.width, (top + height) / record.viewport.height],
       };
     });
@@ -162,15 +220,15 @@ async function renderPage(pageNumber) {
   return record.rendering;
 }
 
-function scheduleAnalysis(delay = 650) {
+function handleViewerScroll() {
+  hideSelectionTools();
+  scheduleAnalysis(VIEWPORT_SETTLE_MS);
+}
+
+function scheduleAnalysis(delay = VIEWPORT_SETTLE_MS) {
   clearTimeout(state.analysisTimer);
-  state.viewportRevision += 1;
   closeBubbles();
   if (!state.analysisEnabled || !state.pdf || state.selectingImage) return;
-  if (state.analysisBusy) {
-    state.pendingAnalysis = true;
-    return;
-  }
   state.analysisTimer = setTimeout(() => analyzeCurrentRegion(), delay);
 }
 
@@ -181,7 +239,269 @@ function toggleAnalysis() {
   if (state.analysisEnabled) scheduleAnalysis(200);
 }
 
-async function getCurrentRegion() {
+function updateSelectionTools() {
+  const selection = document.getSelection();
+  if (!selection || selection.isCollapsed || !selection.rangeCount || !state.pdf) return hideSelectionTools();
+  const range = selection.getRangeAt(0);
+  const selected = buildPdfTextSelection(range) || buildBubbleTextSelection(range);
+  if (!selected) return hideSelectionTools();
+  state.textSelection = selected;
+  const hasSavedNoting = selected.sourceType === "bubble" && state.memory?.getBubbleAnnotations(selected.parentBubble.questionBinding).some((annotation) => (
+    annotation.anchor?.field === selected.field
+    && annotation.anchor.end > selected.fieldStart
+    && annotation.anchor.start < selected.fieldEnd
+  ));
+  ui.selectionQuestion.classList.toggle("saved", hasSavedNoting);
+  ui.selectionQuestion.title = hasSavedNoting ? "重新 noting（已有保存结果）" : "noting 选中文本";
+  ui.selectionTools.classList.remove("hidden");
+  const width = ui.selectionTools.offsetWidth;
+  const height = ui.selectionTools.offsetHeight;
+  const left = clamp(selected.anchorRect.left + (selected.anchorRect.width - width) / 2, 8, window.innerWidth - width - 8);
+  const preferredTop = selected.anchorRect.top - height - 8;
+  const top = preferredTop >= 62 ? preferredTop : selected.anchorRect.bottom + 8;
+  ui.selectionTools.style.left = `${left}px`;
+  ui.selectionTools.style.top = `${clamp(top, 62, window.innerHeight - height - 8)}px`;
+}
+
+function hideSelectionTools() {
+  ui.selectionTools.classList.add("hidden");
+  state.textSelection = null;
+}
+
+function buildPdfTextSelection(range) {
+  const groups = new Map();
+  for (const record of state.pages.values()) {
+    const selectedSpans = [];
+    for (const item of record.textItems) {
+      if (!item.element || !range.intersectsNode(item.element)) continue;
+      const length = item.text.length;
+      let start = item.element.contains(range.startContainer) ? selectionBoundaryOffset(item.element, range.startContainer, range.startOffset, length) : 0;
+      let end = item.element.contains(range.endContainer) ? selectionBoundaryOffset(item.element, range.endContainer, range.endOffset, length) : length;
+      start = clamp(start, 0, length);
+      end = clamp(end, start, length);
+      const text = item.text.slice(start, end);
+      if (!text.trim()) continue;
+      const [x1, y1, x2, y2] = item.box;
+      const width = x2 - x1;
+      selectedSpans.push({ id: item.id, text, box: [x1 + width * start / Math.max(1, length), y1, x1 + width * end / Math.max(1, length), y2] });
+    }
+    if (selectedSpans.length) groups.set(record.pageNumber, { record, spans: selectedSpans });
+  }
+  const best = [...groups.entries()].sort((a, b) => b[1].spans.reduce((sum, item) => sum + item.text.length, 0) - a[1].spans.reduce((sum, item) => sum + item.text.length, 0))[0];
+  if (!best) return null;
+  const [page, value] = best;
+  const quote = value.spans.map((item) => item.text).join(" ").replace(/\s+/g, " ").trim();
+  if (!quote) return null;
+  const xs1 = value.spans.map((item) => item.box[0]), ys1 = value.spans.map((item) => item.box[1]);
+  const xs2 = value.spans.map((item) => item.box[2]), ys2 = value.spans.map((item) => item.box[3]);
+  const normalized = [clamp(Math.min(...xs1) - .01, 0, 1), clamp(Math.min(...ys1) - .008, 0, 1), clamp(Math.max(...xs2) + .01, 0, 1), clamp(Math.max(...ys2) + .008, 0, 1)];
+  const rect = range.getBoundingClientRect();
+  const rootAnnotationId = `selection_${page}_${simpleHash(`${quote}:${JSON.stringify(value.spans.map((item) => item.box))}`)}`;
+  return {
+    page,
+    sourceType: "pdf",
+    quote,
+    rootAnnotationId,
+    anchorRect: { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height },
+    region: { page, record: value.record, spans: value.spans, normalized, image: null },
+  };
+}
+
+function buildBubbleTextSelection(range) {
+  const startElement = range.startContainer.nodeType === Node.ELEMENT_NODE ? range.startContainer : range.startContainer.parentElement;
+  const bubbleElement = startElement?.closest?.(".concept-bubble");
+  if (!bubbleElement || startElement?.closest?.("button")) return null;
+  const fieldElement = startElement?.closest?.("[data-bubble-field]");
+  if (!fieldElement || !fieldElement.contains(range.endContainer)) return null;
+  const bubbleIndex = Number(bubbleElement.dataset.bubbleIndex);
+  const bubble = state.bubbleStack[bubbleIndex];
+  const field = fieldElement.dataset.bubbleField;
+  const sourceText = String(bubble?.[field] || "");
+  const prefixRange = range.cloneRange();
+  prefixRange.selectNodeContents(fieldElement);
+  prefixRange.setEnd(range.startContainer, range.startOffset);
+  let fieldStart = prefixRange.toString().length;
+  let fieldEnd = fieldStart + range.toString().length;
+  const rawQuote = sourceText.slice(fieldStart, fieldEnd);
+  const leading = rawQuote.length - rawQuote.trimStart().length;
+  const trailing = rawQuote.length - rawQuote.trimEnd().length;
+  fieldStart += leading;
+  fieldEnd -= trailing;
+  const quote = sourceText.slice(fieldStart, fieldEnd);
+  if (!bubble || !quote.trim()) return null;
+  const rect = range.getBoundingClientRect();
+  const conceptPath = [...bubble.conceptPath, `选中：${quote}`];
+  return {
+    sourceType: "bubble",
+    page: bubble.page,
+    quote,
+    field,
+    fieldStart,
+    fieldEnd,
+    rootAnnotationId: bubble.rootAnnotationId,
+    conceptPath,
+    anchorRect: { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height },
+    parentBubble: bubble,
+  };
+}
+
+function selectionBoundaryOffset(element, container, offset, length) {
+  if (container.nodeType === Node.TEXT_NODE) return offset;
+  if (container === element) return offset <= 0 ? 0 : length;
+  return 0;
+}
+
+async function noteSelectedText() {
+  const selected = state.textSelection;
+  if (!selected || !state.memory) return;
+  if (selected.sourceType === "bubble") {
+    hideSelectionTools();
+    document.getSelection()?.removeAllRanges();
+    return noteSelectedBubbleText(selected);
+  }
+  const taskMemory = state.memory;
+  const taskDocumentId = state.documentId;
+  hideSelectionTools();
+  document.getSelection()?.removeAllRanges();
+  try {
+    bumpCoverageEpoch(taskDocumentId, selected.page);
+    const reservedCoverage = await taskMemory.resetAndReserveCoverage(selected.page, [selected.region.normalized[1], selected.region.normalized[3]]);
+    const includeImage = state.readerSettings.viewportPayloadMode === "image";
+    selected.region.image = includeImage ? cropCanvas(selected.region.record.canvas, selected.region.normalized, state.readerSettings.imagePrecision) : null;
+    if (state.documentId !== taskDocumentId) return;
+    await analyzeCurrentRegion({ force: true, regionOverride: selected.region, reservedCoverage });
+  } catch (error) {
+    console.error(error);
+    showError("选中文本 noting 失败", error);
+  }
+}
+
+async function noteSelectedBubbleText(selected) {
+  const taskId = beginAnalysisProgress();
+  const taskMemory = state.memory;
+  const taskDocumentId = state.documentId;
+  try {
+    setAnalysisProgress(taskId, 0, "正在重新分析选中的气泡文本", selected.quote.slice(0, 100));
+    const viewportRegion = await getCurrentRegion();
+    if (!viewportRegion) throw new Error("当前视野没有可用于 noting 的 PDF 内容。");
+    const openBubbles = state.bubbleStack.map(({ title, explanation, context }) => ({ title, explanation, context }));
+    setAnalysisProgress(taskId, 3, "气泡文本 noting 已发出", `${selected.quote.length} 个字符`);
+    const response = await requestVision([
+      { role: "system", content: "你是学术阅读标注助手。对用户从解释气泡中选中的文字划分重点和需要解释的名词。只能引用给定 span_id，必须返回严格 JSON，不使用 Markdown。同一字符尽量只归入一个标注。" },
+      { role: "user", content: [
+        { type: "text", text: `选中的气泡文本片段：${JSON.stringify([{ id: "selected", text: selected.quote }])}\n当前视野文本：${viewportRegion.spans.map((item) => item.text).join(" ")}\n已展开气泡：${JSON.stringify(openBubbles)}\n返回：{"annotations":[{"kind":"term|keypoint","targets":[{"span_id":"selected","start":0,"end":4}],"label":"原文名词或重点","explanation":"简洁解释","context":"与论文当前语境的关系","secondary_terms":[]}]}。start/end 是选中文本内的字符下标，end 不包含。` },
+        { type: "image_url", image_url: { url: viewportRegion.image } },
+      ]},
+    ]);
+    const data = parseJsonResponse(extractAssistantText(response));
+    let annotations = Array.isArray(data.annotations) ? data.annotations : [];
+    if (!annotations.length && hasSubstantiveText([{ text: selected.quote }])) {
+      annotations = await repairAnnotations([], { spans: [{ id: "selected", text: selected.quote }] });
+    }
+    const accepted = await saveSelectedBubbleAnnotations(annotations, selected, taskMemory, viewportRegion.page);
+    if (state.documentId !== taskDocumentId) return;
+    renderBubbles();
+    finishAnalysisProgress(taskId, accepted ? "气泡 noting 已保存" : "气泡 noting 未生成标注", `生成 ${accepted} 个名词/重点划线`, accepted > 0);
+  } catch (error) {
+    console.error(error);
+    failAnalysisProgress(taskId, error);
+    toast(error.message, true);
+  } finally {
+    if (state.analysisTasks.has(taskId)) finishAnalysisProgress(taskId, "气泡文本 noting 结束", "未保存结果", false);
+  }
+}
+
+async function saveSelectedBubbleAnnotations(annotations, selected, memory, fallbackPage) {
+  let accepted = 0;
+  const region = { spans: [{ id: "selected", text: selected.quote }] };
+  for (const annotation of annotations) {
+    const kind = normalizeAnnotationKind(annotation.kind || annotation.type || annotation.category);
+    if (!kind) continue;
+    for (const target of normalizeAnnotationTargets(annotation, region, kind)) {
+      if ((target.span_id || target.spanId || target.id) !== "selected") continue;
+      const start = clamp(Number(target.start) || 0, 0, selected.quote.length);
+      const rawEnd = Number(target.end);
+      const end = clamp(Number.isFinite(rawEnd) ? rawEnd : selected.quote.length, start, selected.quote.length);
+      if (end <= start) continue;
+      const absoluteStart = selected.fieldStart + start;
+      const absoluteEnd = selected.fieldStart + end;
+      const quote = selected.quote.slice(start, end);
+      const label = String(annotation.label || quote).slice(0, 240);
+      await memory.append({
+        event: "bubble_annotation_upsert",
+        id: `bubble_${kind}_${simpleHash(`${selected.parentBubble.questionBinding}:${selected.field}:${absoluteStart}:${absoluteEnd}:${label}`)}`,
+        kind,
+        page: selected.page || fallbackPage,
+        binding_key: selected.parentBubble.questionBinding,
+        parent_annotation_id: selected.rootAnnotationId,
+        parent_bubble_id: selected.parentBubble.id,
+        anchor: { field: selected.field, start: absoluteStart, end: absoluteEnd, quote },
+        content: {
+          label,
+          explanation: String(annotation.explanation || ""),
+          context: String(annotation.context || ""),
+          secondary_terms: normalizeSecondaryTerms(annotation.secondary_terms),
+        },
+        source: "selected_bubble_text_noting_mllm",
+      });
+      accepted += 1;
+    }
+  }
+  return accepted;
+}
+
+async function resendCurrentViewport() {
+  if (!state.pdf || !state.memory) return;
+  clearTimeout(state.analysisTimer);
+  ui.resendViewport.disabled = true;
+  const taskMemory = state.memory;
+  const taskDocumentId = state.documentId;
+  try {
+    const includeImage = state.readerSettings.viewportPayloadMode === "image";
+    setStatus("正在清理当前视野的发送记录…", "working");
+    const region = await getCurrentRegion({ includeImage, precision: state.readerSettings.imagePrecision });
+    if (!region) {
+      toast("当前视野没有可重新发送的 PDF 文本", true);
+      setStatus("当前视野没有可提取文本");
+      return;
+    }
+    if (state.documentId !== taskDocumentId) return;
+    bumpCoverageEpoch(taskDocumentId, region.page);
+    const reservedCoverage = await taskMemory.resetAndReserveCoverage(
+      region.page,
+      [region.normalized[1], region.normalized[3]],
+    );
+    toast("当前视野已重新标为已发送，正在重新识别");
+    await analyzeCurrentRegion({ force: true, regionOverride: region, reservedCoverage });
+  } catch (error) {
+    console.error(error);
+    showError("重新发送当前视野失败", error);
+    setStatus("重新发送失败");
+  } finally {
+    if (state.documentId === taskDocumentId) ui.resendViewport.disabled = false;
+  }
+}
+
+function coverageEpochKey(documentId, page) {
+  return `${documentId}:${page}`;
+}
+
+function getCoverageEpoch(documentId, page) {
+  return state.coverageEpochs.get(coverageEpochKey(documentId, page)) || 0;
+}
+
+function bumpCoverageEpoch(documentId, page) {
+  const key = coverageEpochKey(documentId, page);
+  state.coverageEpochs.set(key, getCoverageEpoch(documentId, page) + 1);
+}
+
+async function completeTaskCoverage(memory, documentId, page, intervals, taskEpoch) {
+  if (getCoverageEpoch(documentId, page) !== taskEpoch) return false;
+  await memory.completeCoverage(page, intervals);
+  return true;
+}
+
+async function getCurrentRegion({ includeImage = true, precision = state.readerSettings.imagePrecision } = {}) {
   const viewerRect = ui.viewer.getBoundingClientRect();
   const focusRect = getFocusRect(viewerRect);
   const candidates = [];
@@ -210,31 +530,97 @@ async function getCurrentRegion() {
   }
 
   if (!best?.spans.length) return null;
-  const image = cropCanvas(best.record.canvas, best.normalized);
+  const image = includeImage ? cropCanvas(best.record.canvas, best.normalized, precision) : null;
   return { page: best.record.pageNumber, record: best.record, spans: best.spans, normalized: best.normalized, image };
 }
 
-async function analyzeCurrentRegion() {
-  if (!state.analysisEnabled) return;
-  if (state.analysisBusy) { state.pendingAnalysis = true; return; }
-  state.analysisBusy = true;
-  const revision = state.viewportRevision;
+async function analyzeCurrentRegion({ force = false, regionOverride = null, reservedCoverage = null } = {}) {
+  if (!force && !state.analysisEnabled) return;
+  const textOnlyMode = state.readerSettings.viewportPayloadMode === "text";
+  const existingUnderline = textOnlyMode ? null : findUnderlineInCurrentFocus();
+  if (!force && existingUnderline) {
+    setStatus("视野内已有划线 · 已跳过识别", "ready");
+    ui.analysisState.title = `检测到${existingUnderline.kind === "term" ? "名词" : "重点"}划线：${existingUnderline.content?.label || existingUnderline.anchor?.quote || "已有标注"}。左侧“理解图片”仍可正常使用。`;
+    return;
+  }
+  const taskId = beginAnalysisProgress();
+  let signature = null;
+  let ownsSignature = false;
+  let coverageIntervals = reservedCoverage;
+  let coverageEpoch = null;
   try {
     const settings = await loadApiSettings();
     if (!settings.endpoint || !settings.model || !settings.apiKey) {
       setStatus("请先设置 API");
+      finishAnalysisProgress(taskId, "等待 API 设置", "请点击右上角设置图标填写接口地址、模型与 API Key", false);
       return;
     }
-    const region = await getCurrentRegion();
-    if (!region) return;
-    const signature = `${region.page}:${simpleHash(region.spans.map((span) => span.text).join(" "))}`;
-    if (state.regionSignatures.has(signature)) {
+    const taskMemory = state.memory;
+    const taskDocumentId = state.documentId;
+    const includeImage = state.readerSettings.viewportPayloadMode === "image";
+    setAnalysisProgress(taskId, 0, "正在捕捉当前视野", includeImage ? "图文模式：准备裁剪页面截图" : "纯文本模式：不会生成或上传截图");
+    const region = regionOverride || await getCurrentRegion({ includeImage, precision: state.readerSettings.imagePrecision });
+    if (!region) {
+      finishAnalysisProgress(taskId, "当前视野没有可提取文本", "请稍微滚动页面或扩大视野范围", false);
+      return;
+    }
+    if (state.documentId !== taskDocumentId) {
+      finishAnalysisProgress(taskId, "PDF 已切换", "旧文档尚未发出请求，本次任务已安全结束", false);
+      return;
+    }
+    if (coverageIntervals) coverageEpoch = getCoverageEpoch(taskDocumentId, region.page);
+    if (!includeImage) {
+      coverageEpoch = getCoverageEpoch(taskDocumentId, region.page);
+      if (!coverageIntervals) {
+        coverageIntervals = await taskMemory.reserveCoverage(
+          region.page,
+          [region.normalized[1], region.normalized[3]],
+        );
+      }
+      if (!coverageIntervals.length) {
+        finishAnalysisProgress(taskId, "当前视野已发送或已完成 · 跳过识别", `第 ${region.page} 页 · 重叠区域已从本次任务中裁剪`, true);
+        return;
+      }
+      const unseenSpans = region.spans.filter((span) => coverageIntervals.some(([start, end]) => span.box[3] > start && span.box[1] < end));
+      if (!unseenSpans.length) {
+        await completeTaskCoverage(taskMemory, taskDocumentId, region.page, coverageIntervals, coverageEpoch);
+        finishAnalysisProgress(taskId, "新区域没有文本 · 已记录覆盖", `第 ${region.page} 页 · 未调用 API`, true);
+        return;
+      }
+      region.spans = unseenSpans;
+      const targetLength = Math.max(.001, region.normalized[3] - region.normalized[1]);
+      const unseenPercent = Math.min(100, Math.round(intervalLength(coverageIntervals) / targetLength * 100));
+      setAnalysisProgress(taskId, 1, "已提取未扫描文本", `第 ${region.page} 页 · 新区域约占当前视野 ${unseenPercent}% · ${unseenSpans.length} 个文本片段`);
+    }
+    else setAnalysisProgress(taskId, 1, "已提取 PDF 文本", `第 ${region.page} 页 · ${region.spans.length} 个文本片段`);
+    const legacySignature = `${region.page}:${simpleHash(region.spans.map((span) => span.text).join(" "))}`;
+    const coverageKey = coverageIntervals || [[region.normalized[1], region.normalized[3]]];
+    signature = `${taskDocumentId}:${legacySignature}:${coverageKey.flat().map((value) => value.toFixed(3)).join(",")}`;
+    if (!force && (state.regionSignatures.has(signature) || state.regionSignatures.has(legacySignature))) {
+      if (coverageIntervals) await completeTaskCoverage(taskMemory, taskDocumentId, region.page, coverageIntervals, coverageEpoch);
       setStatus("已从 memory 恢复", "ready");
+      finishAnalysisProgress(taskId, "已从本地 memory 恢复", `第 ${region.page} 页 · 无需调用 API`, true);
       return;
     }
+    if (!coverageIntervals && state.inFlightSignatures.has(signature)) {
+      finishAnalysisProgress(taskId, "该视野正在识别", `第 ${region.page} 页 · 已有相同区域请求在运行`, true);
+      return;
+    }
+    state.inFlightSignatures.add(signature);
+    ownsSignature = true;
 
-    setStatus("正在理解当前视野…", "working");
+    setStatus(includeImage ? "正在理解当前视野（图文）…" : "正在理解当前视野（仅文本）…", "working");
     const spanPayload = region.spans.map(({ id, text, box }) => ({ id, text, bbox: box }));
+    const textBytes = new TextEncoder().encode(JSON.stringify(spanPayload)).byteLength;
+    const imageBytes = region.image ? estimateDataUrlBytes(region.image) : 0;
+    const encodedImageBytes = region.image ? new TextEncoder().encode(region.image).byteLength : 0;
+    const payloadDetail = `第 ${region.page} 页 · 文本 ${formatBytes(textBytes)}${region.image ? ` · 截图 ${formatBytes(imageBytes)} / 传输约 ${formatBytes(encodedImageBytes)} · ${precisionLabel(state.readerSettings.imagePrecision)}` : " · 无截图"}`;
+    setAnalysisProgress(taskId, 2, region.image ? "截图已压缩，正在准备请求" : "文本载荷已准备", payloadDetail);
+    const requestContent = [
+      { type: "text", text: `页面文本片段：${JSON.stringify(spanPayload)}\n返回格式：{"annotations":[{"kind":"term|keypoint","targets":[{"span_id":"...","start":0,"end":4}],"label":"原文名词或重点短标题","explanation":"简洁中文解释","context":"为什么在本文语境重要","secondary_terms":[{"term":"解释中出现的二级名词","explanation":"一句话解释","parent_concept":"上级概念"}]}]}。start/end是对应文本片段中的字符下标，end不包含；重点可覆盖多个完整片段，名词必须精确到词。名词最多5个，重点最多3个。` },
+    ];
+    if (region.image) requestContent.push({ type: "image_url", image_url: { url: region.image } });
+    setAnalysisProgress(taskId, 3, "请求已发出，等待模型响应", payloadDetail);
     const response = await requestVision([
       {
         role: "system",
@@ -242,52 +628,76 @@ async function analyzeCurrentRegion() {
       },
       {
         role: "user",
-        content: [
-          { type: "text", text: `页面文本片段：${JSON.stringify(spanPayload)}\n返回格式：{"annotations":[{"kind":"term|keypoint","targets":[{"span_id":"...","start":0,"end":4}],"label":"原文名词或重点短标题","explanation":"简洁中文解释","context":"为什么在本文语境重要","secondary_terms":[{"term":"解释中出现的二级名词","explanation":"一句话解释","parent_concept":"上级概念"}]}]}。start/end是对应文本片段中的字符下标，end不包含；重点可覆盖多个完整片段，名词必须精确到词。名词最多5个，重点最多3个。` },
-          { type: "image_url", image_url: { url: region.image } },
-        ],
+        content: region.image ? requestContent : requestContent[0].text,
       },
     ]);
-    if (revision !== state.viewportRevision) { state.pendingAnalysis = true; return; }
+    setAnalysisProgress(taskId, 4, "模型已响应，正在解析和定位", "校验 JSON、标注类型、span_id 与字符范围");
     const data = parseJsonResponse(extractAssistantText(response));
+    if (coverageIntervals) await completeTaskCoverage(taskMemory, taskDocumentId, region.page, coverageIntervals, coverageEpoch);
     const initialAnnotations = Array.isArray(data.annotations) ? data.annotations : [];
-    let accepted = await saveAnnotations(initialAnnotations, region, signature);
+    let accepted = await saveAnnotations(initialAnnotations, region, signature, taskMemory);
     let returned = initialAnnotations.length;
 
     if (accepted === 0 && hasSubstantiveText(region.spans)) {
       setStatus(returned ? "正在修复标注位置…" : "正在补充最小标注…", "working");
+      setAnalysisProgress(taskId, 3, returned ? "首次结果无法定位，正在轻量修复" : "首次未返回标注，正在补充请求", `首次返回 ${returned} 个 · 第二次请求仅发送文本`);
       const repaired = await repairAnnotations(initialAnnotations, region);
-      if (revision !== state.viewportRevision) { state.pendingAnalysis = true; return; }
+      setAnalysisProgress(taskId, 4, "修复结果已返回，正在重新定位", `累计收到 ${returned + repaired.length} 个候选标注`);
       returned += repaired.length;
-      accepted += await saveAnnotations(repaired, region, signature);
+      accepted += await saveAnnotations(repaired, region, signature, taskMemory);
     }
 
     if (accepted > 0) {
-      state.regionSignatures.add(signature);
-      renderPageAnnotations(region.page);
+      setAnalysisProgress(taskId, 5, "正在绘制划线并保存 memory", `有效标注 ${accepted} 个`);
+      if (state.documentId === taskDocumentId) {
+        state.regionSignatures.add(signature);
+        renderPageAnnotations(region.page);
+      }
       setStatus(`模型返回 ${returned} 个 · 绘制 ${accepted} 个`, "ready");
+      finishAnalysisProgress(taskId, "视野理解完成", `第 ${region.page} 页 · 模型返回 ${returned} 个 · 绘制并保存 ${accepted} 个`, true);
     } else {
       setStatus("本次未生成有效标注，移动视野可重试");
+      finishAnalysisProgress(taskId, "本次没有有效标注", `模型累计返回 ${returned} 个，但没有可映射到原文的标注`, false);
     }
     clearError();
   } catch (error) {
     console.error(error);
     setStatus("分析暂不可用");
     showError("当前视野分析失败", error);
+    failAnalysisProgress(taskId, error);
   } finally {
-    state.analysisBusy = false;
-    if (state.pendingAnalysis && state.analysisEnabled) {
-      state.pendingAnalysis = false;
-      clearTimeout(state.analysisTimer);
-      state.analysisTimer = setTimeout(() => analyzeCurrentRegion(), 180);
-    }
+    if (ownsSignature) state.inFlightSignatures.delete(signature);
+    if (state.analysisTasks.has(taskId)) finishAnalysisProgress(taskId, "分析任务结束", "任务未产生可保存结果", false);
   }
 }
 
-async function saveAnnotations(annotations, region, signature) {
+function findUnderlineInCurrentFocus() {
+  if (!state.memory || !state.pdf) return null;
+  const viewerRect = ui.viewer.getBoundingClientRect();
+  const focusRect = getFocusRect(viewerRect);
+  for (const annotation of state.memory.list()) {
+    if (!["term", "keypoint"].includes(annotation.kind)) continue;
+    const record = state.pages.get(annotation.page);
+    if (!record) continue;
+    const pageRect = record.element.getBoundingClientRect();
+    const boxes = annotation.anchor?.bboxes || (annotation.anchor?.bbox ? [annotation.anchor.bbox] : []);
+    for (const [x1, y1, x2, y2] of boxes) {
+      const underlineRect = {
+        left: pageRect.left + x1 * pageRect.width,
+        top: pageRect.top + y1 * pageRect.height,
+        right: pageRect.left + x2 * pageRect.width,
+        bottom: pageRect.top + y2 * pageRect.height,
+      };
+      if (intersectionArea(underlineRect, focusRect) > 0) return annotation;
+    }
+  }
+  return null;
+}
+
+async function saveAnnotations(annotations, region, signature, memory) {
   let accepted = 0;
   for (const annotation of annotations) {
-    if (await saveModelAnnotation(annotation, region, signature)) accepted += 1;
+    if (await saveModelAnnotation(annotation, region, signature, memory)) accepted += 1;
   }
   return accepted;
 }
@@ -313,7 +723,7 @@ function hasSubstantiveText(spans) {
   return text.length >= 32 && /[A-Za-z\u4e00-\u9fff]{3}/.test(text);
 }
 
-async function saveModelAnnotation(annotation, region, signature) {
+async function saveModelAnnotation(annotation, region, signature, memory) {
   const kind = normalizeAnnotationKind(annotation.kind || annotation.type || annotation.category);
   const targets = normalizeAnnotationTargets(annotation, region, kind);
   const matched = targets.map((target) => {
@@ -338,7 +748,7 @@ async function saveModelAnnotation(annotation, region, signature) {
   if (!matched.length || !kind) return false;
   const label = String(annotation.label || matched.map((item) => item.text).join(" ")).slice(0, 240);
   const id = `${kind}_${region.page}_${simpleHash(`${label}:${JSON.stringify(matched.map((item) => item.box))}`)}`;
-  await state.memory.append({
+  await memory.append({
     event: "annotation_upsert", id, kind, page: region.page,
     region_signature: signature,
     anchor: { quote: matched.map((item) => item.selectedText || item.text).join(" "), bboxes: matched.map((item) => item.box) },
@@ -398,37 +808,138 @@ function renderPageAnnotations(pageNumber) {
       setNormalizedBox(mark, box);
       mark.addEventListener("click", (event) => {
         event.stopPropagation();
-        openAnnotationBubble(annotation, mark.getBoundingClientRect());
+        const anchorRect = mark.getBoundingClientRect();
+        const overlapping = annotation.kind === "image" ? [annotation] : findAnnotationsAtPoint(pageNumber, event.clientX, event.clientY, annotation);
+        if (overlapping.length > 1) openAnnotationChooser(overlapping, anchorRect);
+        else openAnnotationBubble(annotation, anchorRect);
       });
       layer.append(mark);
     }
   }
 }
 
+function findAnnotationsAtPoint(pageNumber, clientX, clientY, primary = null) {
+  if (!clientX && !clientY) return primary ? [primary] : [];
+  const record = state.pages.get(pageNumber);
+  if (!record) return primary ? [primary] : [];
+  const pageRect = record.element.getBoundingClientRect();
+  const x = (clientX - pageRect.left) / pageRect.width;
+  const y = (clientY - pageRect.top) / pageRect.height;
+  const verticalTolerance = 7 / Math.max(1, pageRect.height);
+  const matches = new Map(primary ? [[primary.id, primary]] : []);
+  for (const annotation of state.memory.list()) {
+    if (annotation.page !== pageNumber || !["term", "keypoint"].includes(annotation.kind)) continue;
+    const boxes = annotation.anchor?.bboxes || (annotation.anchor?.bbox ? [annotation.anchor.bbox] : []);
+    if (boxes.some(([x1, y1, x2, y2]) => x >= x1 && x <= x2 && y >= y1 - verticalTolerance && y <= y2 + verticalTolerance)) {
+      matches.set(annotation.id, annotation);
+    }
+  }
+  return [...matches.values()].sort((a, b) => (a.kind === "term" ? -1 : 1) - (b.kind === "term" ? -1 : 1));
+}
+
+function handleTextMapAnnotationClick(pageNumber, event) {
+  if (!document.getSelection()?.isCollapsed) return;
+  const overlapping = findAnnotationsAtPoint(pageNumber, event.clientX, event.clientY);
+  const imageAnnotation = overlapping.length ? null : findImageAnnotationAtPoint(pageNumber, event.clientX, event.clientY);
+  if (!overlapping.length && !imageAnnotation) return;
+  event.stopPropagation();
+  const anchorRect = { left: event.clientX, right: event.clientX, top: event.clientY, bottom: event.clientY, width: 0, height: 0 };
+  if (overlapping.length > 1) openAnnotationChooser(overlapping, anchorRect);
+  else openAnnotationBubble(overlapping[0] || imageAnnotation, anchorRect);
+}
+
+function findImageAnnotationAtPoint(pageNumber, clientX, clientY) {
+  const record = state.pages.get(pageNumber);
+  if (!record) return null;
+  const pageRect = record.element.getBoundingClientRect();
+  const x = (clientX - pageRect.left) / pageRect.width;
+  const y = (clientY - pageRect.top) / pageRect.height;
+  return state.memory.list().filter((annotation) => {
+    if (annotation.page !== pageNumber || annotation.kind !== "image") return false;
+    const boxes = annotation.anchor?.bboxes || (annotation.anchor?.bbox ? [annotation.anchor.bbox] : []);
+    return boxes.some(([x1, y1, x2, y2]) => x >= x1 && x <= x2 && y >= y1 && y <= y2);
+  }).at(-1) || null;
+}
+
+function openAnnotationChooser(annotations, anchorRect) {
+  state.bubbleStack = [];
+  ui.bubbleLayer.replaceChildren();
+  const chooser = document.createElement("section");
+  chooser.className = "annotation-chooser";
+  const heading = document.createElement("div");
+  heading.className = "chooser-heading";
+  heading.innerHTML = `<strong>这里有多个标注</strong><button title="关闭">×</button>`;
+  heading.querySelector("button").addEventListener("click", closeBubbles);
+  chooser.append(heading);
+  for (const annotation of annotations) {
+    const option = document.createElement("button");
+    option.className = "annotation-option";
+    const badge = document.createElement("span");
+    badge.className = `annotation-badge ${annotation.kind}`;
+    badge.textContent = annotation.kind === "term" ? "名词" : "重点";
+    const label = document.createElement("span");
+    label.textContent = annotation.content?.label || annotation.anchor?.quote || "查看解释";
+    option.append(badge, label);
+    option.addEventListener("click", () => openAnnotationBubble(annotation, anchorRect));
+    chooser.append(option);
+  }
+  ui.bubbleLayer.append(chooser);
+  const width = chooser.offsetWidth;
+  const height = chooser.offsetHeight;
+  const left = clamp(anchorRect.right + 9, 12, window.innerWidth - width - 12);
+  const top = clamp(anchorRect.bottom - 58 + 7, 12, window.innerHeight - 58 - height - 12);
+  chooser.style.left = `${left}px`;
+  chooser.style.top = `${top}px`;
+}
+
 function openAnnotationBubble(annotation, anchorRect) {
-  state.bubbleStack = [{
+  const bubble = {
     id: annotation.id,
     title: annotation.content?.label || (annotation.kind === "image" ? "图片解释" : "解释"),
     explanation: annotation.content?.explanation || "暂无解释",
     context: annotation.content?.context || "",
     secondaryTerms: normalizeSecondaryTerms(annotation.content?.secondary_terms),
     annotation,
+    isTerm: annotation.kind === "term",
+    page: annotation.page,
+    rootAnnotationId: annotation.id,
     anchorRect,
-  }];
+  };
+  bubble.conceptPath = [bubble.title];
+  hydrateBubbleQuestion(bubble);
+  state.bubbleStack = [bubble];
   renderBubbles();
 }
 
 function openChildBubble(parentIndex, term, sourceButton) {
   state.bubbleStack = state.bubbleStack.slice(0, parentIndex + 1);
-  state.bubbleStack.push({
+  const parent = state.bubbleStack[parentIndex];
+  const bubble = {
     id: `child_${simpleHash(term.term)}`,
     title: term.term,
     explanation: term.explanation || "点击右上角问号获取详细解释。",
     context: term.parent_concept ? `上级概念：${term.parent_concept}` : "",
     secondaryTerms: normalizeSecondaryTerms(term.secondary_terms),
+    isTerm: true,
+    page: parent.page,
+    rootAnnotationId: parent.rootAnnotationId,
+    conceptPath: [...parent.conceptPath, term.term],
     anchorRect: sourceButton.getBoundingClientRect(),
-  });
+  };
+  hydrateBubbleQuestion(bubble);
+  state.bubbleStack.push(bubble);
   renderBubbles();
+}
+
+function questionBindingKey(rootAnnotationId, conceptPath) {
+  return JSON.stringify([rootAnnotationId || "", ...(conceptPath || [])]);
+}
+
+function hydrateBubbleQuestion(bubble) {
+  bubble.questionBinding = questionBindingKey(bubble.rootAnnotationId, bubble.conceptPath);
+  bubble.questionEvent = state.memory?.getQuestion(bubble.questionBinding) || null;
+  bubble.questionLoading = false;
+  return bubble;
 }
 
 function renderBubbles() {
@@ -439,12 +950,32 @@ function renderBubbles() {
     const element = document.createElement("section");
     element.className = "concept-bubble";
     element.dataset.depth = String(actualIndex);
+    element.dataset.bubbleIndex = String(actualIndex);
     const path = state.bubbleStack.slice(0, actualIndex + 1).map((item) => item.title).join(" › ");
     element.innerHTML = `<div class="bubble-path"></div><div class="bubble-head"><h3></h3><button class="ask" title="结合当前PDF视野详细解释">?</button><button class="close" title="关闭">×</button></div><div class="bubble-body"></div>`;
-    element.querySelector(".bubble-path").textContent = path;
+    const pathElement = element.querySelector(".bubble-path");
+    if (bubble.isTerm) {
+      const wikiLink = document.createElement("a");
+      wikiLink.className = "bubble-wiki-link";
+      wikiLink.textContent = `wiki · ${bubble.title}`;
+      wikiLink.href = wikipediaSearchUrl(bubble.title);
+      wikiLink.target = "_blank";
+      wikiLink.rel = "noopener noreferrer";
+      pathElement.append(wikiLink);
+    } else {
+      pathElement.textContent = path;
+    }
     element.querySelector("h3").textContent = bubble.title;
+    element.querySelector("h3").dataset.bubbleField = "title";
+    renderBubbleAnnotatedText(element.querySelector("h3"), bubble.title, bubble, actualIndex, "title", false);
     renderExplanation(element.querySelector(".bubble-body"), bubble, actualIndex);
-    element.querySelector(".ask").addEventListener("click", () => requestDetailedExplanation(actualIndex, element));
+    const ask = element.querySelector(".ask");
+    ask.classList.toggle("saved", Boolean(bubble.questionEvent));
+    ask.classList.toggle("loading", Boolean(bubble.questionLoading));
+    ask.textContent = bubble.questionLoading ? "…" : "?";
+    ask.title = bubble.questionEvent ? "展开或收起已保存的追问" : "结合当前 PDF 视野追问";
+    ask.disabled = Boolean(bubble.questionLoading);
+    ask.addEventListener("click", () => handleBubbleQuestion(actualIndex, ask));
     element.querySelector(".close").addEventListener("click", () => {
       state.bubbleStack = state.bubbleStack.slice(0, actualIndex);
       renderBubbles();
@@ -456,14 +987,103 @@ function renderBubbles() {
 
 function renderExplanation(container, bubble, bubbleIndex) {
   const paragraph = document.createElement("div");
-  appendTextWithTerms(paragraph, bubble.explanation, bubble.secondaryTerms, (term, button) => openChildBubble(bubbleIndex, term, button));
+  paragraph.dataset.bubbleField = "explanation";
+  renderBubbleAnnotatedText(paragraph, bubble.explanation, bubble, bubbleIndex, "explanation", true);
   container.append(paragraph);
   if (bubble.context) {
     const context = document.createElement("div");
     context.className = "bubble-context";
-    context.textContent = bubble.context;
+    context.dataset.bubbleField = "context";
+    renderBubbleAnnotatedText(context, bubble.context, bubble, bubbleIndex, "context", false);
     container.append(context);
   }
+}
+
+function renderBubbleAnnotatedText(container, text, bubble, bubbleIndex, field, includeSecondaryTerms) {
+  container.replaceChildren();
+  const value = String(text || "");
+  const annotations = (state.memory?.getBubbleAnnotations(bubble.questionBinding) || []).filter((annotation) => (
+    annotation.anchor?.field === field
+    && Number.isFinite(annotation.anchor.start)
+    && Number.isFinite(annotation.anchor.end)
+    && annotation.anchor.end > annotation.anchor.start
+    && annotation.anchor.start < value.length
+  ));
+  const boundaries = [...new Set([0, value.length, ...annotations.flatMap((annotation) => [
+    clamp(annotation.anchor.start, 0, value.length),
+    clamp(annotation.anchor.end, 0, value.length),
+  ])])].sort((a, b) => a - b);
+  for (let index = 0; index < boundaries.length - 1; index += 1) {
+    const start = boundaries[index], end = boundaries[index + 1];
+    if (end <= start) continue;
+    const segment = value.slice(start, end);
+    const active = annotations.filter((annotation) => annotation.anchor.start < end && annotation.anchor.end > start);
+    if (!active.length) {
+      if (includeSecondaryTerms) appendTextWithTerms(container, segment, bubble.secondaryTerms, (term, button) => openChildBubble(bubbleIndex, term, button));
+      else container.append(document.createTextNode(segment));
+      continue;
+    }
+    const mark = document.createElement("button");
+    mark.className = `bubble-note-mark ${[...new Set(active.map((annotation) => annotation.kind))].join(" ")}`;
+    mark.textContent = segment;
+    mark.title = active.map((annotation) => annotation.content?.label || annotation.anchor?.quote).join(" / ");
+    mark.addEventListener("click", () => {
+      const anchorRect = mark.getBoundingClientRect();
+      if (active.length > 1) openBubbleNoteChooser(bubbleIndex, active, anchorRect);
+      else openBubbleNote(bubbleIndex, active[0], anchorRect);
+    });
+    container.append(mark);
+  }
+}
+
+function openBubbleNote(bubbleIndex, annotation, anchorRect) {
+  const parent = state.bubbleStack[bubbleIndex];
+  if (!parent) return;
+  state.bubbleStack = state.bubbleStack.slice(0, bubbleIndex + 1);
+  const bubble = {
+    id: annotation.id,
+    title: annotation.content?.label || annotation.anchor?.quote || "标注",
+    explanation: annotation.content?.explanation || "暂无解释",
+    context: annotation.content?.context || "",
+    secondaryTerms: normalizeSecondaryTerms(annotation.content?.secondary_terms),
+    isTerm: annotation.kind === "term",
+    page: annotation.page || parent.page,
+    rootAnnotationId: parent.rootAnnotationId,
+    conceptPath: [...parent.conceptPath, annotation.content?.label || annotation.anchor?.quote || "标注"],
+    anchorRect,
+  };
+  hydrateBubbleQuestion(bubble);
+  state.bubbleStack.push(bubble);
+  renderBubbles();
+}
+
+function openBubbleNoteChooser(bubbleIndex, annotations, anchorRect) {
+  ui.bubbleLayer.querySelector(".bubble-note-chooser")?.remove();
+  const chooser = document.createElement("section");
+  chooser.className = "annotation-chooser bubble-note-chooser";
+  const heading = document.createElement("div");
+  heading.className = "chooser-heading";
+  heading.innerHTML = `<strong>这里有多个标注</strong><button title="关闭">×</button>`;
+  heading.querySelector("button").addEventListener("click", () => chooser.remove());
+  chooser.append(heading);
+  for (const annotation of annotations) {
+    const option = document.createElement("button");
+    option.className = "annotation-option";
+    option.innerHTML = `<span class="annotation-badge ${annotation.kind}">${annotation.kind === "term" ? "名词" : "重点"}</span><span></span>`;
+    option.lastElementChild.textContent = annotation.content?.label || annotation.anchor?.quote || "查看解释";
+    option.addEventListener("click", () => openBubbleNote(bubbleIndex, annotation, anchorRect));
+    chooser.append(option);
+  }
+  ui.bubbleLayer.append(chooser);
+  const left = clamp(anchorRect.right + 9, 12, window.innerWidth - chooser.offsetWidth - 12);
+  const top = clamp(anchorRect.bottom - 58 + 7, 12, window.innerHeight - 58 - chooser.offsetHeight - 12);
+  chooser.style.left = `${left}px`;
+  chooser.style.top = `${top}px`;
+}
+
+function wikipediaSearchUrl(term) {
+  const query = new URLSearchParams({ title: "Special:Search", search: String(term || "").trim(), fulltext: "1" });
+  return `https://zh.wikipedia.org/w/index.php?${query}`;
 }
 
 function appendTextWithTerms(container, text, terms, onClick) {
@@ -507,36 +1127,100 @@ function layoutBubbles() {
   });
 }
 
-async function requestDetailedExplanation(index, bubbleElement) {
+function handleBubbleQuestion(index, sourceButton) {
   const bubble = state.bubbleStack[index];
-  const body = bubbleElement.querySelector(".bubble-body");
-  const oldContent = body.innerHTML;
-  body.innerHTML = `<div class="bubble-loading">正在结合当前视野深入解释…</div>`;
+  if (!bubble || bubble.questionLoading) return;
+  const anchorRect = sourceButton.getBoundingClientRect();
+  if (bubble.questionEvent) toggleQuestionBubble(index, anchorRect);
+  else requestBubbleQuestion(bubble, anchorRect);
+}
+
+function toggleQuestionBubble(parentIndex, anchorRect) {
+  const parent = state.bubbleStack[parentIndex];
+  const next = state.bubbleStack[parentIndex + 1];
+  if (next?.questionParentBinding === parent.questionBinding) {
+    state.bubbleStack = state.bubbleStack.slice(0, parentIndex + 1);
+    renderBubbles();
+    return;
+  }
+  openQuestionBubble(parentIndex, anchorRect);
+}
+
+function openQuestionBubble(parentIndex, anchorRect) {
+  const parent = state.bubbleStack[parentIndex];
+  const event = parent?.questionEvent;
+  if (!event) return;
+  const content = event.content || {};
+  state.bubbleStack = state.bubbleStack.slice(0, parentIndex + 1);
+  const bubble = {
+    id: event.id,
+    title: content.label || "深入解释",
+    explanation: content.explanation || "暂无追问结果",
+    context: content.context || "",
+    secondaryTerms: normalizeSecondaryTerms(content.secondary_terms),
+    page: event.page || parent.page,
+    rootAnnotationId: parent.rootAnnotationId,
+    conceptPath: [...parent.conceptPath, "追问"],
+    questionParentBinding: parent.questionBinding,
+    anchorRect,
+  };
+  hydrateBubbleQuestion(bubble);
+  state.bubbleStack.push(bubble);
+  renderBubbles();
+}
+
+async function requestBubbleQuestion(bubble, anchorRect) {
+  const taskId = beginAnalysisProgress();
+  const taskMemory = state.memory;
+  const taskDocumentId = state.documentId;
+  const bubbleContext = state.bubbleStack.map(({ title, explanation, context }) => ({ title, explanation, context }));
+  bubble.questionLoading = true;
+  renderBubbles();
   try {
+    setAnalysisProgress(taskId, 0, "正在捕捉追问上下文", `目标：${bubble.title}`);
     const region = await getCurrentRegion();
-    const bubbleContext = state.bubbleStack.map(({ title, explanation, context }) => ({ title, explanation, context }));
+    if (!region) throw new Error("当前视野没有可用于追问的 PDF 内容。");
+    if (state.documentId !== taskDocumentId) throw new Error("PDF 已切换，本次追问已结束。");
+    setAnalysisProgress(taskId, 2, "追问载荷已准备", `第 ${region.page} 页 · 当前视野截图 + ${region.spans.length} 个文本片段`);
     const response = await requestVision([
-      { role: "system", content: "你是严谨的学术概念导师。根据当前PDF视野和已展开概念链，详细解释目标概念。必须返回严格JSON。" },
+      { role: "system", content: "你是严谨的学术概念导师。根据当前 PDF 视野和已展开概念链，详细解释目标概念。必须返回严格 JSON。" },
       { role: "user", content: [
-        { type: "text", text: `目标：${bubble.title}\n当前页面文本：${region.spans.map((item) => item.text).join(" ")}\n已展开气泡：${JSON.stringify(bubbleContext)}\n返回：{"explanation":"详细但清晰的解释","context":"它与当前论文内容的关系","secondary_terms":[{"term":"二级名词","explanation":"一句话解释","parent_concept":"上级概念"}]}` },
+        { type: "text", text: `目标：${bubble.title}\n当前页面文本：${region.spans.map((item) => item.text).join(" ")}\n已展开气泡：${JSON.stringify(bubbleContext)}\n返回：{"label":"深入解释的短标题","explanation":"详细但清晰的解释","context":"它与当前论文内容的关系","secondary_terms":[{"term":"二级名词","explanation":"一句话解释","parent_concept":"上级概念"}]}` },
         { type: "image_url", image_url: { url: region.image } },
       ]},
     ]);
+    setAnalysisProgress(taskId, 4, "追问结果已返回，正在保存", "解析 JSON 并绑定到当前气泡");
     const data = parseJsonResponse(extractAssistantText(response));
-    bubble.explanation = String(data.explanation || bubble.explanation);
-    bubble.context = String(data.context || bubble.context);
-    bubble.secondaryTerms = normalizeSecondaryTerms(data.secondary_terms);
-    await state.memory.append({
-      event: "bubble_detail", id: `detail_${Date.now()}`, page: region.page,
-      parent_annotation_id: state.bubbleStack[0]?.annotation?.id || null,
-      concept_path: state.bubbleStack.slice(0, index + 1).map((item) => item.title),
-      content: { label: bubble.title, explanation: bubble.explanation, context: bubble.context, secondary_terms: bubble.secondaryTerms },
+    const saved = await taskMemory.append({
+      event: "bubble_question_upsert",
+      id: `question_${simpleHash(bubble.questionBinding)}`,
+      page: region.page,
+      binding_key: bubble.questionBinding,
+      parent_annotation_id: bubble.rootAnnotationId,
+      parent_bubble_id: bubble.id,
+      concept_path: bubble.conceptPath,
+      content: {
+        label: String(data.label || "深入解释"),
+        explanation: String(data.explanation || "暂无追问结果"),
+        context: String(data.context || ""),
+        secondary_terms: normalizeSecondaryTerms(data.secondary_terms),
+      },
       source: "manual_question_mllm",
     });
-    renderBubbles();
+    if (state.documentId !== taskDocumentId) return;
+    bubble.questionEvent = saved;
+    bubble.questionLoading = false;
+    finishAnalysisProgress(taskId, "追问已保存", `已绑定到“${bubble.title}”`, true);
+    const currentIndex = state.bubbleStack.indexOf(bubble);
+    if (currentIndex >= 0) openQuestionBubble(currentIndex, anchorRect);
   } catch (error) {
-    body.innerHTML = oldContent;
+    console.error(error);
+    bubble.questionLoading = false;
+    failAnalysisProgress(taskId, error);
     toast(error.message, true);
+    if (state.documentId === taskDocumentId) renderBubbles();
+  } finally {
+    if (state.analysisTasks.has(taskId)) finishAnalysisProgress(taskId, "追问任务结束", "未保存追问结果", false);
   }
 }
 
@@ -545,54 +1229,44 @@ function closeBubbles() {
   ui.bubbleLayer.replaceChildren();
 }
 
-function beginImageSelection() {
-  state.selectingImage = !state.selectingImage;
-  ui.understandImage.classList.toggle("active", state.selectingImage);
-  ui.selectionOverlay.classList.toggle("hidden", !state.selectingImage);
-  if (!state.selectingImage) ui.selectionOverlay.replaceChildren();
+async function understandCurrentViewportImage() {
+  if (!state.pdf || state.selectingImage) return;
+  clearTimeout(state.analysisTimer);
+  state.selectingImage = true;
+  ui.understandImage.disabled = true;
+  ui.understandImage.classList.add("active");
+  const taskDocumentId = state.documentId;
+  try {
+    const focusRect = getFocusRect(ui.viewer.getBoundingClientRect());
+    await understandViewportImage(focusRect);
+  } finally {
+    state.selectingImage = false;
+    ui.understandImage.classList.remove("active");
+    if (state.documentId === taskDocumentId) ui.understandImage.disabled = false;
+  }
 }
 
-let selectionStart = null;
-ui.selectionOverlay.addEventListener("pointerdown", (event) => {
-  selectionStart = { x: event.clientX, y: event.clientY };
-  const box = document.createElement("div");
-  box.className = "selection-box";
-  ui.selectionOverlay.replaceChildren(box);
-  drawSelectionBox(box, selectionStart.x, selectionStart.y, event.clientX, event.clientY);
-  ui.selectionOverlay.setPointerCapture(event.pointerId);
-});
-ui.selectionOverlay.addEventListener("pointermove", (event) => {
-  if (!selectionStart) return;
-  drawSelectionBox(ui.selectionOverlay.firstElementChild, selectionStart.x, selectionStart.y, event.clientX, event.clientY);
-});
-ui.selectionOverlay.addEventListener("pointerup", async (event) => {
-  if (!selectionStart) return;
-  const rect = normalizedClientRect(selectionStart.x, selectionStart.y, event.clientX, event.clientY);
-  selectionStart = null;
-  if (rect.width < 40 || rect.height < 40) { beginImageSelection(); return; }
-  await understandSelectedImage(rect);
-  beginImageSelection();
-});
-
-async function understandSelectedImage(selectionRect) {
+async function understandViewportImage(viewportRect) {
+  const taskMemory = state.memory;
+  const taskDocumentId = state.documentId;
   try {
     let target = null;
     for (const record of state.pages.values()) {
       const rect = record.element.getBoundingClientRect();
-      const area = intersectionArea(rect, selectionRect);
+      const area = intersectionArea(rect, viewportRect);
       if (!target || area > target.area) target = { record, rect, area };
     }
-    if (!target || target.area < 100) throw new Error("请在 PDF 页面内框选图片。 ");
+    if (!target || target.area < 100) throw new Error("当前中央视野没有可截取的 PDF 页面内容。");
     await renderPage(target.record.pageNumber);
     target.rect = target.record.element.getBoundingClientRect();
     const box = [
-      clamp((selectionRect.left - target.rect.left) / target.rect.width, 0, 1),
-      clamp((selectionRect.top - target.rect.top) / target.rect.height, 0, 1),
-      clamp((selectionRect.right - target.rect.left) / target.rect.width, 0, 1),
-      clamp((selectionRect.bottom - target.rect.top) / target.rect.height, 0, 1),
+      clamp((viewportRect.left - target.rect.left) / target.rect.width, 0, 1),
+      clamp((viewportRect.top - target.rect.top) / target.rect.height, 0, 1),
+      clamp((viewportRect.right - target.rect.left) / target.rect.width, 0, 1),
+      clamp((viewportRect.bottom - target.rect.top) / target.rect.height, 0, 1),
     ];
-    setStatus("正在理解图片…", "working");
-    const dataUrl = cropCanvas(target.record.canvas, box);
+    setStatus("正在理解当前视野图片…", "working");
+    const dataUrl = cropCanvas(target.record.canvas, box, state.readerSettings.imagePrecision);
     const nearby = target.record.textItems.filter((item) => boxesIntersect(expandBox(box, .08), item.box)).map((item) => item.text).join(" ");
     const openBubbles = state.bubbleStack.map(({ title, explanation }) => ({ title, explanation }));
     const response = await requestVision([
@@ -603,11 +1277,12 @@ async function understandSelectedImage(selectionRect) {
       ]},
     ]);
     const data = parseJsonResponse(extractAssistantText(response));
+    if (state.documentId !== taskDocumentId) return;
     const blob = await (await fetch(dataUrl)).blob();
     const assetHash = await sha256(await blob.arrayBuffer());
     const id = `image_${target.record.pageNumber}_${simpleHash(JSON.stringify(box))}`;
-    const asset = await state.memory.saveAsset(blob, `${id}.webp`);
-    await state.memory.append({
+    const asset = await taskMemory.saveAsset(blob, `${id}.webp`);
+    await taskMemory.append({
       event: "image_explanation_upsert", id, kind: "image", page: target.record.pageNumber,
       anchor: { bbox: box }, asset, asset_sha256: assetHash,
       content: { label: data.label || `第 ${target.record.pageNumber} 页图片`, explanation: data.explanation || "", context: data.context || "", secondary_terms: normalizeSecondaryTerms(data.secondary_terms) },
@@ -632,6 +1307,9 @@ async function openSettings() {
   ui.focusHeight.value = String(state.readerSettings.focusHeight);
   ui.focusHeightValue.value = `${state.readerSettings.focusHeight}%`;
   ui.showFocusGuide.checked = state.readerSettings.showFocusGuide;
+  ui.payloadModes.forEach((input) => { input.checked = input.value === state.readerSettings.viewportPayloadMode; });
+  ui.imagePrecision.value = state.readerSettings.imagePrecision;
+  updateImagePrecisionState();
   ui.apiTestResult.textContent = "";
   ui.apiTestResult.className = "api-test-result";
   ui.settingsDialog.showModal();
@@ -683,7 +1361,7 @@ async function saveSettingsFromDialog(event) {
     await saveApiSettings({ endpoint: ui.apiEndpoint.value.trim(), model: ui.apiModel.value.trim(), apiKey: ui.apiKey.value.trim() });
     await saveReaderSettings();
     ui.settingsDialog.close();
-    toast("API 设置已保存在本地");
+    toast("设置已保存在本地");
     clearError();
     if (state.pdf) scheduleAnalysis(100);
   } catch (error) { toast(error.message, true); }
@@ -699,18 +1377,19 @@ async function exportMemory() {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-function cropCanvas(canvas, normalizedBox) {
+function cropCanvas(canvas, normalizedBox, precision = "balanced") {
   const [x1, y1, x2, y2] = normalizedBox;
   const sx = Math.floor(x1 * canvas.width), sy = Math.floor(y1 * canvas.height);
   const sw = Math.max(1, Math.floor((x2 - x1) * canvas.width));
   const sh = Math.max(1, Math.floor((y2 - y1) * canvas.height));
-  const maxSide = 1600;
+  const profile = IMAGE_PRECISION[precision] || IMAGE_PRECISION.balanced;
+  const maxSide = profile.maxSide;
   const scale = Math.min(1, maxSide / Math.max(sw, sh));
   const output = document.createElement("canvas");
   output.width = Math.max(16, Math.floor(sw * scale));
   output.height = Math.max(16, Math.floor(sh * scale));
   output.getContext("2d").drawImage(canvas, sx, sy, sw, sh, 0, 0, output.width, output.height);
-  return output.toDataURL("image/webp", .86);
+  return output.toDataURL("image/webp", profile.quality);
 }
 
 function normalizeSecondaryTerms(terms) {
@@ -721,8 +1400,12 @@ function normalizeSecondaryTerms(terms) {
 
 function handleKeydown(event) {
   if (event.key !== "Escape") return;
-  if (state.selectingImage) beginImageSelection();
-  else if (state.bubbleStack.length) {
+  if (!ui.selectionTools.classList.contains("hidden")) {
+    hideSelectionTools();
+    document.getSelection()?.removeAllRanges();
+    return;
+  }
+  if (state.bubbleStack.length) {
     state.bubbleStack.pop();
     renderBubbles();
   }
@@ -734,6 +1417,8 @@ async function loadReaderSettings() {
   state.readerSettings = {
     focusHeight: clamp(Number(value.focusHeight) || 60, 20, 100),
     showFocusGuide: Boolean(value.showFocusGuide),
+    viewportPayloadMode: value.viewportPayloadMode === "text" ? "text" : "image",
+    imagePrecision: IMAGE_PRECISION[value.imagePrecision] ? value.imagePrecision : "balanced",
   };
   updateFocusGuide();
 }
@@ -742,6 +1427,8 @@ async function saveReaderSettings() {
   state.readerSettings = {
     focusHeight: clamp(Number(ui.focusHeight.value) || 60, 20, 100),
     showFocusGuide: ui.showFocusGuide.checked,
+    viewportPayloadMode: ui.payloadModes.find((input) => input.checked)?.value === "text" ? "text" : "image",
+    imagePrecision: IMAGE_PRECISION[ui.imagePrecision.value] ? ui.imagePrecision.value : "balanced",
   };
   await chrome.storage.local.set({ [READER_SETTINGS_KEY]: state.readerSettings });
   updateFocusGuide();
@@ -750,8 +1437,97 @@ async function saveReaderSettings() {
 function previewReaderSettings() {
   state.readerSettings.focusHeight = clamp(Number(ui.focusHeight.value) || 60, 20, 100);
   state.readerSettings.showFocusGuide = ui.showFocusGuide.checked;
+  state.readerSettings.viewportPayloadMode = ui.payloadModes.find((input) => input.checked)?.value === "text" ? "text" : "image";
+  state.readerSettings.imagePrecision = IMAGE_PRECISION[ui.imagePrecision.value] ? ui.imagePrecision.value : "balanced";
   ui.focusHeightValue.value = `${state.readerSettings.focusHeight}%`;
+  updateImagePrecisionState();
   updateFocusGuide();
+}
+
+function updateImagePrecisionState() {
+  const enabled = ui.payloadModes.find((input) => input.checked)?.value === "image";
+  ui.imagePrecision.disabled = !enabled;
+  ui.imagePrecisionRow.classList.toggle("disabled", !enabled);
+}
+
+function beginAnalysisProgress() {
+  const taskId = ++state.nextAnalysisTaskId;
+  state.analysisTasks.set(taskId, {
+    id: taskId,
+    startedAt: performance.now(),
+    title: "准备理解当前视野",
+    detail: "等待当前视野稳定",
+  });
+  if (!state.progressTimer) state.progressTimer = setInterval(renderActiveAnalysisStatus, 100);
+  renderActiveAnalysisStatus();
+  return taskId;
+}
+
+function setAnalysisProgress(taskId, _step, title, detail) {
+  const task = state.analysisTasks.get(taskId);
+  if (!task) return;
+  task.title = title;
+  task.detail = detail;
+  renderActiveAnalysisStatus();
+}
+
+function finishAnalysisProgress(taskId, title, detail, success) {
+  const task = state.analysisTasks.get(taskId);
+  if (!task) return;
+  const elapsed = ((performance.now() - task.startedAt) / 1000).toFixed(1);
+  state.analysisTasks.delete(taskId);
+  if (state.analysisTasks.size) {
+    renderActiveAnalysisStatus();
+  } else {
+    stopAnalysisStatusTimer();
+    setStatus(`${title} · ${elapsed}s`, success ? "ready" : "");
+    ui.analysisState.title = detail;
+  }
+}
+
+function failAnalysisProgress(taskId, error) {
+  const task = state.analysisTasks.get(taskId);
+  if (!task) return;
+  const elapsed = ((performance.now() - task.startedAt) / 1000).toFixed(1);
+  const detail = error?.message || String(error || "未知错误");
+  state.analysisTasks.delete(taskId);
+  if (state.analysisTasks.size) {
+    renderActiveAnalysisStatus();
+  } else {
+    stopAnalysisStatusTimer();
+    setStatus(`视野理解失败 · ${elapsed}s`);
+    ui.analysisState.title = detail;
+  }
+}
+
+function renderActiveAnalysisStatus() {
+  if (!state.analysisTasks.size) return;
+  const tasks = [...state.analysisTasks.values()].sort((a, b) => b.id - a.id);
+  const latest = tasks[0];
+  const elapsed = ((performance.now() - latest.startedAt) / 1000).toFixed(1);
+  const parallel = tasks.length > 1 ? ` · ${tasks.length} 个并行任务` : "";
+  setStatus(`${latest.title} · ${elapsed}s${parallel}`, "working");
+  ui.analysisState.title = `${latest.detail}${tasks.length > 1 ? `\n另有 ${tasks.length - 1} 个较早视野仍在处理中` : ""}`;
+}
+
+function stopAnalysisStatusTimer() {
+  clearInterval(state.progressTimer);
+  state.progressTimer = 0;
+}
+
+function estimateDataUrlBytes(dataUrl) {
+  const encoded = String(dataUrl).split(",")[1] || "";
+  return Math.max(0, Math.floor(encoded.length * .75) - (encoded.endsWith("==") ? 2 : encoded.endsWith("=") ? 1 : 0));
+}
+
+function formatBytes(bytes) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function precisionLabel(value) {
+  return value === "low" ? "低精度" : value === "high" ? "高精度" : "标准精度";
 }
 
 function getFocusRect(viewerRect = ui.viewer.getBoundingClientRect()) {
@@ -798,14 +1574,12 @@ function updateFocusGuide() {
 function setNormalizedBox(element, [x1, y1, x2, y2]) {
   Object.assign(element.style, { left: `${x1 * 100}%`, top: `${y1 * 100}%`, width: `${(x2 - x1) * 100}%`, height: `${(y2 - y1) * 100}%` });
 }
-function drawSelectionBox(box, x1, y1, x2, y2) { const rect = normalizedClientRect(x1, y1, x2, y2); Object.assign(box.style, { left: `${rect.left}px`, top: `${rect.top}px`, width: `${rect.width}px`, height: `${rect.height}px` }); }
-function normalizedClientRect(x1, y1, x2, y2) { const left = Math.min(x1, x2), top = Math.min(y1, y2), right = Math.max(x1, x2), bottom = Math.max(y1, y2); return { left, top, right, bottom, width: right - left, height: bottom - top }; }
 function intersectionArea(a, b) { const width = Math.max(0, Math.min(a.right, b.right) - Math.max(a.left, b.left)); const height = Math.max(0, Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top)); return width * height; }
 function boxesIntersect(a, b) { return Math.min(a[2], b[2]) > Math.max(a[0], b[0]) && Math.min(a[3], b[3]) > Math.max(a[1], b[1]); }
 function expandBox([x1, y1, x2, y2], amount) { return [clamp(x1 - amount, 0, 1), clamp(y1 - amount, 0, 1), clamp(x2 + amount, 0, 1), clamp(y2 + amount, 0, 1)]; }
 function clamp(value, min, max) { return Math.min(max, Math.max(min, value)); }
 function simpleHash(value) { let hash = 2166136261; for (let index = 0; index < value.length; index += 1) { hash ^= value.charCodeAt(index); hash = Math.imul(hash, 16777619); } return (hash >>> 0).toString(36); }
-function setStatus(text, className = "") { ui.analysisState.textContent = text; ui.analysisState.className = `status ${className}`.trim(); }
+function setStatus(text, className = "") { ui.analysisState.textContent = text; ui.analysisState.className = `status ${className}`.trim(); ui.analysisState.title = ""; }
 let toastTimer;
 function toast(message, error = false) { clearTimeout(toastTimer); ui.toast.textContent = message; ui.toast.className = `toast show${error ? " error" : ""}`; toastTimer = setTimeout(() => { ui.toast.className = "toast"; }, 4200); }
 function showError(title, error) {

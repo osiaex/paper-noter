@@ -17,6 +17,7 @@
       <div class="toolbar-actions">
         <span id="analysisState" class="status">等待 PDF</span>
         <button id="toggleAnalysis" class="icon-button" title="暂停或继续智能标注" disabled>◉</button>
+        <button id="resendViewport" class="icon-button" title="清除当前视野的发送记录并重新识别" disabled>↻</button>
         <button id="exportMemory" class="icon-button" title="导出当前 PDF memory" disabled>⇩</button>
         <button id="settingsButton" class="icon-button" title="API 设置">⚙</button>
       </div>
@@ -24,7 +25,7 @@
 
     <main id="workspace" class="workspace empty">
       <aside class="figure-rail">
-        <button id="understandImage" class="figure-button" title="框选并理解图片" disabled>
+        <button id="understandImage" class="figure-button" title="立即截取并理解当前视野" disabled>
           <span>▧</span><small>理解图片</small>
         </button>
       </aside>
@@ -32,14 +33,16 @@
         <div id="emptyState" class="empty-state">
           <div class="empty-icon">PDF</div>
           <h1>把论文放进来，专注眼前这一页</h1>
-          <p>只分析当前视野，用两种划线标出重点与名词。所有记忆保存在本地。</p>
+          <p>直接打开网页或本地 PDF 即可自动进入阅读器，也可以在这里手动选择文件。</p>
           <button id="emptyOpenFile" class="button primary">选择 PDF</button>
         </div>
         <div id="pages" class="pages"></div>
-        <div id="selectionOverlay" class="selection-overlay hidden"></div>
       </section>
       <div id="focusGuideMask" class="focus-guide-mask hidden" aria-hidden="true"><div id="focusGuide" class="focus-guide"></div></div>
       <div id="bubbleLayer" class="bubble-layer"></div>
+      <div id="selectionTools" class="selection-tools hidden" role="toolbar" aria-label="选中文本操作">
+        <button id="selectionQuestion" type="button" title="noting 选中文本">?</button>
+      </div>
     </main>
 
     <dialog id="settingsDialog" class="settings-dialog">
@@ -57,6 +60,19 @@
           <input id="focusHeight" class="range-input" type="range" min="20" max="100" step="5" value="60" />
           <div class="range-labels"><span>更快 · 20%</span><span>更多上下文 · 100%</span></div>
           <label class="checkbox-label"><input id="showFocusGuide" type="checkbox" /><span>显示视野边框，并稍微调暗视野外内容</span></label>
+        </section>
+        <section class="settings-section">
+          <div class="section-title"><strong>自动分析发送内容</strong></div>
+          <label class="radio-label"><input type="radio" name="viewportPayloadMode" value="text" /><span><b>仅发送文本</b><small>速度更快，不上传视野截图</small></span></label>
+          <label class="radio-label"><input type="radio" name="viewportPayloadMode" value="image" checked /><span><b>文本 + 视野截图</b><small>适合公式、版式与图文混排内容</small></span></label>
+          <label id="imagePrecisionRow" class="select-label">截图精度
+            <select id="imagePrecision">
+              <option value="low">低 · 最长边 768px</option>
+              <option value="balanced" selected>标准 · 最长边 1152px</option>
+              <option value="high">高 · 最长边 1600px</option>
+            </select>
+          </label>
+          <p class="setting-hint">仅影响自动视野分析；气泡问号和“理解图片”仍会按需发送图片。</p>
         </section>
         <div id="apiTestResult" class="api-test-result" aria-live="polite"></div>
         <div class="dialog-actions"><button type="button" id="testApi" class="button">测试连接</button><span class="dialog-spacer"></span><button type="button" id="cancelSettings" class="button">取消</button><button type="submit" class="button primary">保存</button></div>

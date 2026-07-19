@@ -45,8 +45,12 @@ button { color: inherit; }
 .pdf-page { position: relative; margin: 0 auto 24px; background: white; box-shadow: 0 8px 30px rgba(34,45,42,.13); }
 .pdf-page canvas { display: block; }
 .sent-coverage-layer { position: absolute; z-index: 1; inset: 0; overflow: hidden; pointer-events: none; }
-.sent-coverage-region { position: absolute; left: 0; width: 100%; background: #727876; opacity: .15; animation: sent-coverage-breathe 4.8s ease-in-out infinite; }
-@keyframes sent-coverage-breathe { 0%, 100% { opacity: .15; } 50% { opacity: 0; } }
+.sent-coverage-region { position: absolute; left: 0; width: 100%; background: #727876; opacity: .15; animation: sent-coverage-breathe 1.6s ease-in-out infinite; }
+@keyframes sent-coverage-breathe {
+  0% { opacity: .15; }
+  50% { opacity: 0; }
+  100% { opacity: .15; }
+}
 @media (prefers-reduced-motion: reduce) { .sent-coverage-region { animation: none; opacity: .1; } }
 .text-map, .annotation-layer { position: absolute; inset: 0; overflow: hidden; }
 .text-map { z-index: 2; color: transparent; user-select: text; }

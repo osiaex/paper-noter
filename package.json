@@ -1,6 +1,6 @@
 {
   "name": "paper-memory-reader",
-  "version": "0.5.17",
+  "version": "0.5.19",
   "private": true,
   "type": "module",
   "scripts": {

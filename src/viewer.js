@@ -56,7 +56,10 @@ const RUNTIME_EN = new Map([
   ["视野理解完成", "Viewport analysis complete"], ["本次没有有效标注", "No valid annotations this time"], ["分析暂不可用", "Analysis temporarily unavailable"],
   ["当前视野分析失败", "Current viewport analysis failed"], ["分析任务结束", "Analysis task finished"],
   ["正在捕捉追问上下文", "Capturing follow-up context"], ["追问载荷已准备", "Follow-up payload ready"], ["追问结果已返回，正在保存", "Follow-up returned; saving"], ["追问已保存", "Follow-up saved"], ["追问任务结束", "Follow-up task finished"],
-  ["正在理解当前视野图片…", "Understanding current viewport image…"], ["图片解释已保存", "Image explanation saved"], ["图片理解失败", "Image understanding failed"],
+  ["正在理解当前视野图片…", "Understanding current viewport image…"], ["正在捕捉当前视野图片", "Capturing current viewport image"],
+  ["正在压缩图片并整理上下文", "Compressing image and preparing context"], ["图片请求已发出，等待模型响应", "Image request sent; waiting for model"],
+  ["图片结果已返回，正在保存 memory", "Image result returned; saving to memory"], ["图片解释已保存", "Image explanation saved"],
+  ["图片解释已保存到当前 PDF memory", "Image explanation saved to this PDF memory"], ["图片理解失败", "Image understanding failed"], ["图片理解任务结束", "Image task finished"],
   ["准备理解当前视野", "Preparing viewport analysis"], ["等待当前视野稳定", "Waiting for the viewport to settle"],
   ["设置已保存在本地", "Settings saved locally"], ["未知错误", "Unknown error"],
 ]);
@@ -80,7 +83,7 @@ const ui = {
 const state = {
   pdf: null, fileName: "", documentId: "", memory: null, pages: new Map(),
   analysisEnabled: true, analysisTimer: 0,
-  regionSignatures: new Set(), inFlightSignatures: new Set(), resetCoverageDocuments: new Set(), coverageEpochs: new Map(), bubbleStack: [], selectingImage: false,
+  regionSignatures: new Set(), inFlightSignatures: new Set(), resetCoverageDocuments: new Set(), coverageEpochs: new Map(), bubbleStack: [], activeImageTasks: 0,
   readerSettings: { language: "zh", focusHeight: 60, showFocusGuide: false, viewportPayloadMode: "image", imagePrecision: "balanced", quickLinkProvider: "wiki", quickLinkCustomLabel: "自定义", quickLinkCustomTemplate: "" }, textSelection: null,
   analysisTasks: new Map(), nextAnalysisTaskId: 0, progressTimer: 0,
 };
@@ -317,7 +320,7 @@ function handleViewerScroll() {
 function scheduleAnalysis(delay = VIEWPORT_SETTLE_MS) {
   clearTimeout(state.analysisTimer);
   closeBubbles();
-  if (!state.analysisEnabled || !state.pdf || state.selectingImage) return;
+  if (!state.analysisEnabled || !state.pdf) return;
   state.analysisTimer = setTimeout(() => analyzeCurrentRegion(), delay);
 }
 
@@ -1341,33 +1344,46 @@ function closeBubbles() {
 }
 
 async function understandCurrentViewportImage() {
-  if (!state.pdf || state.selectingImage) return;
-  clearTimeout(state.analysisTimer);
-  state.selectingImage = true;
-  ui.understandImage.disabled = true;
+  if (!state.pdf || !state.memory) return;
+  const taskId = beginAnalysisProgress();
+  const taskContext = {
+    taskId,
+    memory: state.memory,
+    documentId: state.documentId,
+    imagePrecision: state.readerSettings.imagePrecision,
+    openBubbles: state.bubbleStack.map(({ title, explanation }) => ({ title, explanation })),
+    language: currentLanguage(),
+  };
+  const focusRect = getFocusRect(ui.viewer.getBoundingClientRect());
+  state.activeImageTasks += 1;
   ui.understandImage.classList.add("active");
-  const taskDocumentId = state.documentId;
   try {
-    const focusRect = getFocusRect(ui.viewer.getBoundingClientRect());
-    await understandViewportImage(focusRect);
+    setAnalysisProgress(taskId, 1, "正在捕捉当前视野图片", taskContext.language === "en" ? "The central viewport was frozen at click time" : "点击时的中央视野已固定");
+    const pageNumber = await understandViewportImage(focusRect, taskContext);
+    if (state.documentId !== taskContext.documentId) return;
+    clearError();
+    toast("图片解释已保存到当前 PDF memory");
+    finishAnalysisProgress(taskId, "图片解释已保存", taskContext.language === "en" ? `Page ${pageNumber} · Image task complete` : `第 ${pageNumber} 页 · 图片任务完成`, true);
+  } catch (error) {
+    console.error(error);
+    if (state.documentId === taskContext.documentId) showError("图片理解失败", error);
+    failAnalysisProgress(taskId, error);
   } finally {
-    state.selectingImage = false;
-    ui.understandImage.classList.remove("active");
-    if (state.documentId === taskDocumentId) ui.understandImage.disabled = false;
+    state.activeImageTasks = Math.max(0, state.activeImageTasks - 1);
+    ui.understandImage.classList.toggle("active", state.activeImageTasks > 0);
+    if (state.analysisTasks.has(taskId)) finishAnalysisProgress(taskId, "图片理解任务结束", taskContext.language === "en" ? "No image explanation was saved" : "未保存图片解释", false);
   }
 }
 
-async function understandViewportImage(viewportRect) {
-  const taskMemory = state.memory;
-  const taskDocumentId = state.documentId;
-  try {
+async function understandViewportImage(viewportRect, taskContext) {
+    const { taskId, memory: taskMemory, documentId: taskDocumentId, imagePrecision, openBubbles, language } = taskContext;
     let target = null;
     for (const record of state.pages.values()) {
       const rect = record.element.getBoundingClientRect();
       const area = intersectionArea(rect, viewportRect);
       if (!target || area > target.area) target = { record, rect, area };
     }
-    if (!target || target.area < 100) throw new Error("当前中央视野没有可截取的 PDF 页面内容。");
+    if (!target || target.area < 100) throw new Error(language === "en" ? "There is no capturable PDF content in the central viewport." : "当前中央视野没有可截取的 PDF 页面内容。");
     await renderPage(target.record.pageNumber);
     target.rect = target.record.element.getBoundingClientRect();
     const box = [
@@ -1376,19 +1392,32 @@ async function understandViewportImage(viewportRect) {
       clamp((viewportRect.right - target.rect.left) / target.rect.width, 0, 1),
       clamp((viewportRect.bottom - target.rect.top) / target.rect.height, 0, 1),
     ];
-    setStatus("正在理解当前视野图片…", "working");
-    const dataUrl = cropCanvas(target.record.canvas, box, state.readerSettings.imagePrecision);
+    setAnalysisProgress(taskId, 2, "正在压缩图片并整理上下文", language === "en"
+      ? `Page ${target.record.pageNumber} · ${imagePrecision === "low" ? "low" : imagePrecision === "high" ? "high" : "balanced"} precision`
+      : `第 ${target.record.pageNumber} 页 · ${precisionLabel(imagePrecision)}`);
+    const dataUrl = cropCanvas(target.record.canvas, box, imagePrecision);
     const nearby = target.record.textItems.filter((item) => boxesIntersect(expandBox(box, .08), item.box)).map((item) => item.text).join(" ");
-    const openBubbles = state.bubbleStack.map(({ title, explanation }) => ({ title, explanation }));
+    const systemPrompt = language === "en"
+      ? "You are an academic-figure reading assistant. Explain the reading order, visual elements, conclusion, and relationship to nearby text. Return strict JSON only. Write all explanatory text in English."
+      : "你是学术论文图片阅读助手。解释图的阅读顺序、元素含义、结论以及与附近正文的关系。必须返回严格JSON。所有解释文本使用中文。";
+    const userPrompt = language === "en"
+      ? `Nearby text: ${nearby}\nOpen concepts: ${JSON.stringify(openBubbles)}\nReturn: {"label":"short figure title","explanation":"clear explanation","context":"relationship to the current paper content","secondary_terms":[{"term":"technical term in the figure","explanation":"one-sentence explanation","parent_concept":"parent concept"}]}`
+      : `附近正文：${nearby}\n当前展开概念：${JSON.stringify(openBubbles)}\n返回：{"label":"图片短标题","explanation":"清晰解释","context":"与论文当前内容的关系","secondary_terms":[{"term":"图中专业名词","explanation":"一句话解释","parent_concept":"上级概念"}]}`;
+    setAnalysisProgress(taskId, 3, "图片请求已发出，等待模型响应", language === "en"
+      ? `Page ${target.record.pageNumber} · ${formatBytes(estimateDataUrlBytes(dataUrl))}`
+      : `第 ${target.record.pageNumber} 页 · ${formatBytes(estimateDataUrlBytes(dataUrl))}`);
     const response = await requestVision([
-      { role: "system", content: `你是学术论文图片阅读助手。解释图的阅读顺序、元素含义、结论以及与附近正文的关系。必须返回严格JSON。${responseLanguageInstruction()}` },
+      { role: "system", content: systemPrompt },
       { role: "user", content: [
-        { type: "text", text: `附近正文：${nearby}\n当前展开概念：${JSON.stringify(openBubbles)}\n返回：{"label":"图片短标题","explanation":"清晰解释","context":"与论文当前内容的关系","secondary_terms":[{"term":"图中专业名词","explanation":"一句话解释","parent_concept":"上级概念"}]}` },
+        { type: "text", text: userPrompt },
         { type: "image_url", image_url: { url: dataUrl } },
       ]},
     ]);
+    setAnalysisProgress(taskId, 4, "图片结果已返回，正在保存 memory", language === "en"
+      ? `Page ${target.record.pageNumber} · Parsing JSON`
+      : `第 ${target.record.pageNumber} 页 · 正在解析 JSON`);
     const data = parseJsonResponse(extractAssistantText(response));
-    if (state.documentId !== taskDocumentId) return;
+    if (state.documentId !== taskDocumentId) return target.record.pageNumber;
     const blob = await (await fetch(dataUrl)).blob();
     const assetHash = await sha256(await blob.arrayBuffer());
     const id = `image_${target.record.pageNumber}_${simpleHash(JSON.stringify(box))}`;
@@ -1396,18 +1425,11 @@ async function understandViewportImage(viewportRect) {
     await taskMemory.append({
       event: "image_explanation_upsert", id, kind: "image", page: target.record.pageNumber,
       anchor: { bbox: box }, asset, asset_sha256: assetHash,
-      content: { label: data.label || `第 ${target.record.pageNumber} 页图片`, explanation: data.explanation || "", context: data.context || "", secondary_terms: normalizeSecondaryTerms(data.secondary_terms) },
+      content: { label: data.label || (language === "en" ? `Image on page ${target.record.pageNumber}` : `第 ${target.record.pageNumber} 页图片`), explanation: data.explanation || "", context: data.context || "", secondary_terms: normalizeSecondaryTerms(data.secondary_terms) },
       source: "manual_image_mllm",
     });
     renderPageAnnotations(target.record.pageNumber);
-    setStatus("图片解释已保存", "ready");
-    clearError();
-    toast("图片解释已保存到当前 PDF memory");
-  } catch (error) {
-    console.error(error);
-    setStatus("图片理解失败");
-    showError("图片理解失败", error);
-  }
+    return target.record.pageNumber;
 }
 
 async function openSettings() {
@@ -1644,9 +1666,9 @@ function renderActiveAnalysisStatus() {
   const tasks = [...state.analysisTasks.values()].sort((a, b) => b.id - a.id);
   const latest = tasks[0];
   const elapsed = ((performance.now() - latest.startedAt) / 1000).toFixed(1);
-  const parallel = tasks.length > 1 ? ` · ${tasks.length} 个并行任务` : "";
+  const parallel = tasks.length > 1 ? ` · ${tasks.length} ${t("个并行任务", "parallel tasks")}` : "";
   setStatus(`${latest.title} · ${elapsed}s${parallel}`, "working");
-  ui.analysisState.title = `${latest.detail}${tasks.length > 1 ? `\n另有 ${tasks.length - 1} 个较早视野仍在处理中` : ""}`;
+  ui.analysisState.title = `${latest.detail}${tasks.length > 1 ? `\n${t(`另有 ${tasks.length - 1} 个较早任务仍在处理中`, `${tasks.length - 1} earlier task(s) still running`)}` : ""}`;
 }
 
 function stopAnalysisStatusTimer() {

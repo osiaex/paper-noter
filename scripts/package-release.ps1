@@ -36,8 +36,17 @@ try {
   }
 
   $checksumLines = $archives | Sort-Object Name | ForEach-Object {
-    $hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-    "$hash  $($_.Name)"
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    $stream = [System.IO.File]::OpenRead($_.FullName)
+    try {
+      $hashBytes = $sha256.ComputeHash($stream)
+      $hash = ([System.BitConverter]::ToString($hashBytes)).Replace('-', '').ToLowerInvariant()
+      "$hash  $($_.Name)"
+    }
+    finally {
+      $stream.Dispose()
+      $sha256.Dispose()
+    }
   }
   Set-Content -LiteralPath (Join-Path $releaseRoot 'SHA256SUMS.txt') -Value $checksumLines -Encoding UTF8
 

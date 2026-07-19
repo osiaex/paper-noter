@@ -1,57 +1,63 @@
-# Paper Memory Reader
+# Paper Noter
 
-Chrome/Edge Manifest V3 学术 PDF 阅读扩展。它只分析当前视野，用两种划线标出重点和名词，并为每篇 PDF 保存独立的本地 JSONL memory。
+> 只理解眼前这一段，让论文阅读少一点打断。
+> Understand what is in view, without interrupting the reading flow.
 
-自动视野分析可在设置中选择“仅发送文本”或“文本 + 视野截图”。截图模式提供低、标准、高三档精度；气泡问号与手动图片理解始终按需发送图片。
+[中文](#中文) · [English](#english) · [v0.6 Release](https://github.com/osiaex/paper-noter/releases/tag/v0.6)
 
-滚动连续停止至少 500 ms 后，才会把当前位置视为一次新的取视野动作并启动独立分析；较早视野的请求继续并行运行。相同区域会自动去重，JSONL memory 写入保持串行以避免文件竞争。
+## Poster / 产品展示
 
-图文模式下，若滚动停止时当前感知区域已经包含任意名词线或重点线，自动分析会直接跳过。纯文本模式改用更精确的覆盖区间差集；左侧“理解图片”不受这些规则影响。
+<p align="center">
+  <img src="post/1.png" alt="Paper Noter image understanding and annotated PDF reading" width="100%" />
+</p>
 
-点击左侧“理解图片”会立即截取中央感知区域作为图片，并连同区域附近文本和当前展开的气泡上下文发送给 API；不再进入手动框选或拖动截图流程。
+<p align="center">
+  <img src="post/2.png" alt="Nested term bubbles and mathematical concepts" width="100%" />
+</p>
 
-图片理解区域位于名词和重点划线的下层，不再用大面积按钮截获文字点击。点击重叠位置时优先打开名词/重点；只有该位置没有文字标注时才打开图片解释，同时区域内文本仍可正常拖选。
+<table>
+  <tr>
+    <td width="50%"><img src="post/3.png" alt="Paper Noter Chinese API and reader settings" /></td>
+    <td width="50%"><img src="post/4.png" alt="Paper Noter English API and reader settings" /></td>
+  </tr>
+</table>
 
-气泡右上角的“？”追问会作为独立并行任务运行，不覆盖原解释。结果以该气泡的下级气泡展开，并通过“根标注 ID + 概念路径”稳定绑定后写入 JSONL memory；重新打开论文后仍可恢复。未追问的“？”使用透明背景与默认文字颜色，已有结果时显示为蓝底、纸张背景色文字，点击可展开或收起保存的结果。
+## 中文
 
-鼠标选中 PDF 原文后，选区旁只显示一个 `?`。这个选区 `?` 执行 noting：只重新识别精确选中的字符范围，并使用与视野刷新相同的原子 `sent → completed` 状态；它不执行气泡追问。气泡自身右上角的 `?` 仍保持原有追问功能。
+Paper Noter 是一个 Chrome / Edge Manifest V3 学术 PDF 阅读扩展。它只分析屏幕中央的当前视野，用两种不遮挡正文的下划线标出**名词**与**重点**，并为每篇 PDF 保存独立的本地 JSONL memory。
 
-选区 `?` 同样支持气泡标题、解释正文和语境文本。它会把所选气泡文字作为独立视野交给模型生成名词与重点，并按“当前气泡绑定键 + 文本字段 + 字符范围”保存；结果直接在原气泡文字上绘制蓝色名词线和橙色重点线，点击划线可继续打开解释。已有 noting 结果时按钮使用蓝色完成状态，但点击仍会重新执行 noting。气泡右上角的 `?` 始终只负责原有的深入追问。
+### 主要功能
 
-名词气泡顶部的灰色小标题是可配置快速链接。设置中可选择 Wiki、Google Scholar、知网、ChatGPT、Gemini、QWEN、Kimi、DeepSeek、GLM，或填写自定义显示名称与包含 `{query}` 的 URL 模板。嵌套名词气泡只把本气泡自身的名词代入查询，不拼接父级概念路径；非名词气泡仍显示普通路径。部分 AI 网站是否自动预填查询取决于其网页当前对 URL 参数的支持。
+- 直接接管网页 PDF；本地 PDF 可在允许文件网址访问后直接打开。
+- 自动分析当前视野，支持“仅文本”与“文本 + 截图”模式。
+- 滚动停止 500 ms 后识别新区域，并通过覆盖区间避免重复请求。
+- 名词和重点可以重叠；点击重叠位置时可选择需要打开的标注。
+- 名词气泡支持嵌套解释、公式渲染、深度追问与快速搜索链接。
+- 鼠标选中文本后可立即运行 noting，包括 PDF 正文与气泡文本。
+- “理解图片”会立即截取当前视野并作为独立并行任务处理。
+- 每篇 PDF 的标注、解释、追问和图片理解结果均保存在浏览器本地。
+- 中文 / English 界面、可调视野高度、截图精度与可选视野边框。
 
-纯文本模式会在每篇论文的 `coverage.json` 中分别记录 `sent`（已发送）与 `completed`（已完成）的归一化纵向区间。任务发送前会原子占用差集区域，后续并行任务会同时避开已发送和已完成区域；模型结果成功返回并完成 JSON 解析后，该区域从 `sent` 迁移到 `completed`。每次阅读器启动后首次打开某篇 PDF 时，只清空该 PDF 的 `sent`，保留长期的 `completed`。缩放页面或调整视野高度不会造成重复读取，小于页面高度约 1.2% 的边界碎片会被忽略。
+### 下载
 
-右上角的刷新按钮会用一次原子写入清除当前视野在 `sent` 与 `completed` 中的旧区间，并立即把整个视野重新标记为 `sent` 后发起请求；结果成功返回并解析后再次迁移为 `completed`。它不会删除已经保存的名词、重点、图片解释或气泡内容，刷新发生前仍在运行的旧任务也不会重新写回被清除的覆盖状态。
+前往 [GitHub Releases](https://github.com/osiaex/paper-noter/releases) 下载 `paper-noter-v0.6-full.zip`。发布包包含完整 CMap、标准字体回退、WASM 与 ICC 资源，以保证中日韩论文、特殊字体和复杂 PDF 的兼容性。
 
-设置支持中文与 English 界面。固定 UI、主要运行状态、错误标题和控件提示会随语言切换，新的模型解释也会请求使用所选语言；已有 memory 内容保持原文，不做破坏性翻译。
+### 安装
 
-每页处于 `sent`、尚未迁移到 `completed` 的纵向区间会显示浅灰呼吸遮罩：从 85% 透明（15% 可见）缓慢过渡到完全透明。请求完成时遮罩立即消失；失败后则保留，直到重启清理或手动重新发送。
+Chrome 不允许从 GitHub 静默安装未上架扩展，因此 GitHub 版本需要进行一次手动加载：
 
-## 安装
+1. 下载并解压 ZIP。
+2. 打开 `chrome://extensions`，开启右上角的“开发者模式”。
+3. 点击“加载已解压的扩展程序”，选择刚刚解压的文件夹。
+4. 若要直接打开本地 PDF，在扩展详情中启用“允许访问文件网址”。
 
-```powershell
-npm.cmd install
-npm.cmd run build
-```
+真正的一键安装需要后续发布到 Chrome Web Store。不要直接打开 ZIP 内的 `viewer.html`；它必须作为扩展加载。
 
-在 `chrome://extensions` 开启开发者模式，选择“加载已解压的扩展程序”，然后选择 `dist` 目录。
+### API 与隐私
 
-## 直接打开 PDF
+在阅读器右上角打开设置，填写 OpenAI Chat Completions 兼容接口、模型名称和 API Key。Key 保存在 `chrome.storage.local`；只有触发分析时，当前视野文本、按设置生成的截图以及展开气泡上下文才会发送到用户配置的接口。
 
-- 网页 PDF：点击 PDF 链接或在地址栏打开 PDF 时，扩展会自动接管当前标签页并直接加载。
-- 本地 PDF：在扩展详情页开启“允许访问文件网址”后，直接用 Chrome 打开本地 PDF 即可自动加载。
-- 无法自动获取的登录保护或临时链接：仍可使用阅读器顶部的“打开 PDF”手动导入。
-
-自动接管需要访问 PDF 原始地址，因此扩展声明了 HTTP、HTTPS 与本地文件的读取权限。扩展只在加载 PDF 和调用用户配置的 API 时进行网络请求。
-
-## API
-
-右上角设置支持 OpenAI Chat Completions 兼容的多模态接口。API Key 保存在 `chrome.storage.local`，模型请求由扩展 service worker 发出。
-
-## Memory
-
-运行时数据位于浏览器 OPFS：
+运行时数据保存在浏览器 OPFS：
 
 ```text
 paper-memory/<pdf_sha256>/
@@ -61,4 +67,97 @@ paper-memory/<pdf_sha256>/
   assets/*.webp
 ```
 
-卸载扩展或清除扩展数据可能删除 OPFS 内容，请使用工具栏导出按钮备份重要 memory。
+卸载扩展或清除扩展数据可能删除本地 memory。请通过工具栏导出按钮备份重要内容。
+
+### 从源码构建
+
+```powershell
+npm.cmd install
+npm.cmd run check
+npm.cmd run build
+```
+
+可加载的完整扩展位于 `dist/`。生成发布包：
+
+```powershell
+npm.cmd run release
+```
+
+ZIP 与 SHA-256 校验和会生成在 `release/`。
+
+### 开源说明
+
+Paper Noter 采用 [MIT License](LICENSE) 开源，欢迎用于个人学习、教学、学术研究和非商业项目。MIT 同时允许商业使用、修改与再分发，但必须保留版权和许可声明。项目按“原样”提供，不附带任何明示或暗示担保。
+
+PDF.js 与 KaTeX 的许可证见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+
+---
+
+## English
+
+Paper Noter is a Chrome / Edge Manifest V3 extension for reading academic PDFs. It analyzes only the current central viewport, marks **terms** and **key points** with two unobtrusive underline styles, and keeps a separate local JSONL memory for every PDF.
+
+### Highlights
+
+- Opens web PDFs directly and supports local PDFs with file-URL access enabled.
+- Analyzes the current viewport in text-only or text-plus-image mode.
+- Waits 500 ms after scrolling and tracks covered intervals to avoid duplicate requests.
+- Supports overlapping term and key-point annotations with an annotation chooser.
+- Provides nested concept bubbles, math rendering, saved follow-ups, and configurable quick links.
+- Runs noting on selected text in both the PDF and explanation bubbles.
+- Captures the current viewport immediately for parallel image-understanding tasks.
+- Stores annotations, explanations, follow-ups, and image results locally per PDF.
+- Includes Chinese / English UI, adjustable viewport height, image precision, and an optional focus border.
+
+### Download
+
+Download `paper-noter-v0.6-full.zip` from [GitHub Releases](https://github.com/osiaex/paper-noter/releases). The package includes complete CMaps, standard-font fallbacks, WASM, and ICC resources for reliable rendering of CJK papers, unusual fonts, and complex PDFs.
+
+### Install
+
+Chrome does not allow silent installation of an unpacked extension from GitHub. One manual load is required:
+
+1. Download and extract the ZIP.
+2. Open `chrome://extensions` and enable **Developer mode**.
+3. Click **Load unpacked** and select the extracted folder.
+4. To open local PDFs directly, enable **Allow access to file URLs** in the extension details.
+
+A true one-click installation requires a future Chrome Web Store listing. Do not open `viewer.html` directly; load the folder as an extension.
+
+### API and privacy
+
+Open Settings in the top-right corner and enter an OpenAI Chat Completions-compatible endpoint, model name, and API key. The key stays in `chrome.storage.local`. Viewport text, optional screenshots, and expanded bubble context are sent only when an analysis task is triggered.
+
+Per-paper data is stored locally in browser OPFS:
+
+```text
+paper-memory/<pdf_sha256>/
+  meta.json
+  memory.jsonl
+  coverage.json
+  assets/*.webp
+```
+
+Uninstalling the extension or clearing its data may remove local memory. Export important memory from the toolbar first.
+
+### Build from source
+
+```powershell
+npm.cmd install
+npm.cmd run check
+npm.cmd run build
+```
+
+The unpacked build is generated in `dist/`. To build the release archive:
+
+```powershell
+npm.cmd run release
+```
+
+ZIP files and SHA-256 checksums are generated in `release/`.
+
+### Open-source statement
+
+Paper Noter is released under the [MIT License](LICENSE). Personal learning, teaching, academic research, and non-commercial projects are especially welcome. MIT also permits commercial use, modification, and redistribution when the copyright and license notice are retained. The software is provided “as is”, without warranty.
+
+See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for PDF.js and KaTeX licensing information.

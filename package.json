@@ -1,10 +1,11 @@
 {
-  "name": "paper-memory-reader",
-  "version": "0.5.25",
+  "name": "paper-noter",
+  "version": "0.6.0",
   "private": true,
   "type": "module",
   "scripts": {
     "build": "node scripts/build.mjs",
+    "release": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-release.ps1",
     "check": "node --check src/viewer.js && node --check src/background.js && node --check src/memory.js && node --check src/api.js && node --test tests/*.test.mjs"
   },
   "dependencies": {

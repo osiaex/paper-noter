@@ -78,7 +78,7 @@ const ui = {
   focusGuideMask: $("#focusGuideMask"), focusGuide: $("#focusGuide"),
   selectionTools: $("#selectionTools"), selectionQuestion: $("#selectionQuestion"),
   quickLinkProvider: $("#quickLinkProvider"), quickLinkCustom: $("#quickLinkCustom"), quickLinkCustomLabel: $("#quickLinkCustomLabel"), quickLinkCustomTemplate: $("#quickLinkCustomTemplate"),
-  interfaceLanguage: $("#interfaceLanguage"),
+  interfaceLanguage: $("#interfaceLanguage"), languageFlag: $("#languageFlag"),
   payloadModes: [...document.querySelectorAll('input[name="viewportPayloadMode"]')],
   imagePrecision: $("#imagePrecision"), imagePrecisionRow: $("#imagePrecisionRow"),
 };
@@ -144,6 +144,8 @@ function localizeRuntimeText(value) {
 function applyInterfaceLanguage() {
   const language = currentLanguage();
   document.documentElement.lang = language === "en" ? "en" : "zh-CN";
+  ui.languageFlag.src = language === "en" ? "assets/flag-gb.svg" : "assets/flag-cn.svg";
+  ui.languageFlag.alt = language === "en" ? "United Kingdom flag" : "中国国旗";
   document.querySelectorAll("[data-i18n]").forEach((element) => {
     if (state.pdf && (element === ui.analysisState || element === ui.documentTitle)) return;
     const value = UI_TEXT[language][element.dataset.i18n];

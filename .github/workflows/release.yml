@@ -1,0 +1,46 @@
+name: Release extension packages
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    if: github.ref == 'refs/tags/v0.6' || github.event.head_commit.message == 'release: prepare Paper Noter v0.6'
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Test
+        run: npm run check
+
+      - name: Build Full package
+        run: npm run release
+
+      - name: Create GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v0.6" `
+            release/paper-noter-v0.6-full.zip `
+            release/SHA256SUMS.txt `
+            --title "Paper Noter v0.6" `
+            --target "${{ github.sha }}" `
+            --notes-file RELEASE_NOTES.md

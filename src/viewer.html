@@ -3,18 +3,18 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Paper Memory Reader</title>
+    <title>Paper Noter</title>
     <link rel="stylesheet" href="vendor/katex/katex.min.css" />
     <link rel="stylesheet" href="viewer.css" />
   </head>
   <body>
     <header class="toolbar">
-      <div class="brand"><span class="brand-mark">P</span><span>Paper Memory</span></div>
-      <div class="document-actions">
+      <div class="toolbar-start">
+        <div class="brand"><span class="brand-mark">P</span><span>Paper Noter</span></div>
         <button id="openFile" class="button primary" data-i18n="openPdf">打开 PDF</button>
         <input id="fileInput" type="file" accept="application/pdf,.pdf" hidden />
-        <span id="documentTitle" class="document-title" data-i18n="noPaper">尚未打开论文</span>
       </div>
+      <span id="documentTitle" class="document-title" data-i18n="noPaper">尚未打开论文</span>
       <div class="toolbar-actions">
         <span id="analysisState" class="status" data-i18n="waitingPdf">等待 PDF</span>
         <button id="toggleAnalysis" class="icon-button" title="暂停或继续智能标注" disabled>◉</button>
@@ -59,7 +59,10 @@
         <section class="settings-section">
           <div class="section-title"><strong data-i18n="interfaceLanguage">界面语言</strong></div>
           <label class="select-label"><span data-i18n="language">语言</span>
-            <select id="interfaceLanguage"><option value="zh">中文</option><option value="en">English</option></select>
+            <span class="language-control">
+              <img id="languageFlag" class="language-flag" src="assets/flag-cn.svg" alt="中国国旗" />
+              <select id="interfaceLanguage"><option value="zh">中文</option><option value="en">English</option></select>
+            </span>
           </label>
         </section>
         <section class="settings-section">

@@ -2,8 +2,6 @@ name: Release extension packages
 
 on:
   push:
-    branches:
-      - main
     tags:
       - "v*"
 
@@ -12,7 +10,6 @@ permissions:
 
 jobs:
   release:
-    if: "${{ github.ref == 'refs/tags/v0.6' || github.event.head_commit.message == 'fix: release v0.6 workflow' }}"
     runs-on: windows-latest
     steps:
       - name: Check out repository
@@ -37,10 +34,11 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          gh release create "v0.6" `
-            release/paper-noter-v0.6-full.zip `
+          gh release create "$env:RELEASE_TAG" `
+            "release/paper-noter-$env:RELEASE_TAG-full.zip" `
             release/SHA256SUMS.txt `
-            --title "Paper Noter v0.6" `
+            --title "Paper Noter $env:RELEASE_TAG" `
             --target "${{ github.sha }}" `
             --notes-file RELEASE_NOTES.md

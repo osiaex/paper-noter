@@ -1,33 +1,35 @@
-# Paper Noter v0.6
+# Paper Noter v0.7
 
 ## 中文
 
-Paper Noter 是一个只理解当前视野、并为每篇论文保存独立本地记忆的 Chrome/Edge 学术 PDF 阅读扩展。
+Paper Noter v0.7 聚焦于可靠的本地记忆迁移、更安全的 PDF 读取，以及更准确、更克制的阅读标注体验。
 
-v0.6 主要更新：
+主要更新：
 
-- 中英文界面与国旗语言提示。
-- PDF 标题在不同窗口尺寸下保持居中。
-- 名词与重点双层划线、嵌套气泡和公式渲染。
-- 并行视野理解、图片理解和气泡追问任务。
-- 本地 JSONL memory、区域去重与重新发送。
-- 可配置 API、截图精度和气泡快速搜索链接。
-- 提供包含完整 PDF.js 辅助资源的 Full 下载包。
+- 为每篇 PDF 提供可导入、导出的便携 JSONL memory，并自动合并去重。
+- 使用文件 SHA-256 与布局指纹安全匹配 memory；纯文本指纹不会直接复用旧坐标。
+- 本地 PDF 在进入阅读器前进行短期缓存，并提供 fetch、XHR 与手动选择回退。
+- 修复模型名词与错误字符坐标不一致导致的错位划线，改用真实 DOM Range 定位。
+- 支持删除根气泡、嵌套概念、气泡 noting 与追问结果，并持久保存删除状态。
+- 改进超长术语换行、气泡操作区、双层划线位置与 30% 透明度。
+- 默认显示视野边框，并同步所有“已发送、未完成”区域的柔和呼吸动画。
+- 空 memory、图片型 PDF 与抽样页损坏均可安全降级，不影响正常阅读。
 
-发布包包含完整 CMap、标准字体回退、WASM 与 ICC 资源，以提供更稳定的 PDF 兼容性。
+Full 安装包包含完整 CMap、标准字体回退、WASM 与 ICC 资源。
 
 ## English
 
-Paper Noter is a Chrome/Edge academic PDF reader that analyzes only the current viewport and keeps a separate local memory for every paper.
+Paper Noter v0.7 focuses on portable local memory, safer PDF loading, and more accurate, restrained reading annotations.
 
-Highlights in v0.6:
+Highlights:
 
-- Chinese and English interfaces with visual language flags.
-- A truly centered PDF title across responsive toolbar layouts.
-- Dual term/key-point underlines, nested bubbles, and math rendering.
-- Parallel viewport, image-understanding, and follow-up tasks.
-- Local JSONL memory, coverage deduplication, and manual resend.
-- Configurable API, screenshot precision, and quick-search providers.
-- A Full release package with complete PDF.js support resources.
+- Portable JSONL memory import/export for each PDF, with deduplicated merging.
+- Safe memory matching with file SHA-256 and layout fingerprints; text-only identity never reuses old coordinates automatically.
+- Short-lived local-PDF caching before reader navigation, followed by fetch, XHR, and manual-selection fallbacks.
+- Exact term-to-source validation and real DOM Range geometry to prevent misplaced underlines.
+- Persistent deletion for root bubbles, nested concepts, bubble noting, and follow-up results.
+- Better long-term wrapping, bubble controls, dual-underline positioning, and 30% underline transparency.
+- A visible-by-default focus guide and synchronized, gentle breathing for sent-but-unfinished regions.
+- Safe degradation for empty memories, image-only PDFs, and damaged sampled text layers.
 
-The package includes complete CMaps, standard-font fallbacks, WASM, and ICC resources for reliable PDF compatibility.
+The Full package includes complete CMaps, standard-font fallbacks, WASM, and ICC resources.

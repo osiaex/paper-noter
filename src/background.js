@@ -21,13 +21,38 @@ chrome.webRequest.onHeadersReceived.addListener(
   ["responseHeaders"],
 );
 
-function openInReader(tabId, sourceUrl) {
+async function openInReader(tabId, sourceUrl) {
   if (redirectingTabs.has(tabId) || sourceUrl.startsWith(chrome.runtime.getURL(""))) return;
   redirectingTabs.add(tabId);
-  const readerUrl = chrome.runtime.getURL(`viewer.html?source=${encodeURIComponent(sourceUrl)}`);
+  const cacheToken = sourceUrl.startsWith("file:") ? await cacheLocalPdfBeforeRedirect(sourceUrl) : "";
+  const query = new URLSearchParams({ source: sourceUrl });
+  if (cacheToken) query.set("cache", cacheToken);
+  const readerUrl = chrome.runtime.getURL(`viewer.html?${query}`);
   chrome.tabs.update(tabId, { url: readerUrl }).catch(() => {}).finally(() => {
     setTimeout(() => redirectingTabs.delete(tabId), 1500);
   });
+}
+
+async function cacheLocalPdfBeforeRedirect(sourceUrl) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
+  try {
+    if (!await chrome.extension.isAllowedFileSchemeAccess()) return "";
+    const response = await fetch(sourceUrl, { cache: "no-store", signal: controller.signal });
+    const buffer = await response.arrayBuffer();
+    if (!buffer.byteLength) return "";
+    const token = crypto.randomUUID();
+    const cache = await caches.open("paper-noter-local-pdf-v1");
+    const cacheUrl = chrome.runtime.getURL(`source-cache/${token}`);
+    await cache.put(cacheUrl, new Response(buffer, { headers: { "content-type": response.headers.get("content-type") || "application/pdf" } }));
+    const keys = await cache.keys();
+    for (const stale of keys.slice(0, Math.max(0, keys.length - 4))) await cache.delete(stale);
+    return token;
+  } catch {
+    return "";
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {

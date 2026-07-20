@@ -2,9 +2,11 @@ import * as pdfjsLib from "./vendor/pdf.mjs";
 import { extractAssistantText, loadApiSettings, parseJsonResponse, requestVision, saveApiSettings } from "./api.js";
 import { PaperMemory, sha256 } from "./memory.js";
 import { pdfFileName } from "./pdf-routing.js";
-import { intervalLength } from "./coverage.js";
+import { intervalLength, synchronizedAnimationDelay } from "./coverage.js";
 import { buildQuickLink, normalizeQuickLinkSettings, validateQuickLinkSettings } from "./quick-links.js";
 import { tokenizeMath } from "./math.js";
+import { findExactTermRange, isAnnotationAnchorConsistent } from "./annotation-anchor.js";
+import { computePdfIdentity } from "./pdf-identity.js";
 import { render as renderMath } from "./vendor/katex/katex.mjs";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = chrome.runtime.getURL("vendor/pdf.worker.mjs");
@@ -12,6 +14,7 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = chrome.runtime.getURL("vendor/pdf.worke
 const $ = (selector) => document.querySelector(selector);
 const READER_SETTINGS_KEY = "paperMemoryReaderSettings";
 const VIEWPORT_SETTLE_MS = 500;
+const SENT_COVERAGE_FULL_CYCLE_MS = 2500;
 const IMAGE_PRECISION = {
   low: { maxSide: 768, quality: .58 },
   balanced: { maxSide: 1152, quality: .72 },
@@ -19,8 +22,8 @@ const IMAGE_PRECISION = {
 };
 const UI_TEXT = {
   zh: {
-    openPdf: "打开 PDF", noPaper: "尚未打开论文", waitingPdf: "等待 PDF", understandImage: "理解图片",
-    emptyTitle: "把论文放进来，专注眼前这一页", emptyDescription: "直接打开网页或本地 PDF 即可自动进入阅读器，也可以在这里手动选择文件。", choosePdf: "选择 PDF",
+    openPdf: "打开 PDF", noPaper: "尚未打开文档", waitingPdf: "等待 PDF", understandImage: "理解图片",
+    emptyDescription: "直接打开网页或本地 PDF 即可自动进入阅读器，也可以在这里手动选择文件。", choosePdf: "选择 PDF",
     connectModel: "连接模型", apiSettings: "API 设置", endpoint: "OpenAI 兼容接口地址", modelName: "模型名称",
     privacy: "Key 仅保存在浏览器本地。图片和当前视野文本只会在触发分析时发往你填写的接口。",
     interfaceLanguage: "界面语言", language: "语言", focusRange: "视野范围", faster: "更快 · 20%", moreContext: "更多上下文 · 100%", showFocus: "显示视野边框，并稍微调暗视野外内容",
@@ -29,8 +32,8 @@ const UI_TEXT = {
     testConnection: "测试连接", cancel: "取消", save: "保存", analysisFailed: "分析失败", checkApi: "检查 API 设置",
   },
   en: {
-    openPdf: "Open PDF", noPaper: "No paper open", waitingPdf: "Waiting for PDF", understandImage: "Understand image",
-    emptyTitle: "Bring in a paper and focus on what is in front of you", emptyDescription: "Open a web or local PDF directly, or choose a file here.", choosePdf: "Choose PDF",
+    openPdf: "Open PDF", noPaper: "No document open", waitingPdf: "Waiting for PDF", understandImage: "Understand image",
+    emptyDescription: "Open a web or local PDF directly, or choose a file here.", choosePdf: "Choose PDF",
     connectModel: "Connect model", apiSettings: "API settings", endpoint: "OpenAI-compatible endpoint", modelName: "Model name",
     privacy: "Your key is stored only in this browser. Images and viewport text are sent only when analysis is triggered.",
     interfaceLanguage: "Interface language", language: "Language", focusRange: "Viewport range", faster: "Faster · 20%", moreContext: "More context · 100%", showFocus: "Show the viewport border and dim content outside it",
@@ -69,7 +72,7 @@ const ui = {
   toolbar: document.querySelector(".toolbar"),
   workspace: $("#workspace"), viewer: $("#viewer"), pages: $("#pages"), fileInput: $("#fileInput"),
   openFile: $("#openFile"), emptyOpenFile: $("#emptyOpenFile"), documentTitle: $("#documentTitle"),
-  analysisState: $("#analysisState"), toggleAnalysis: $("#toggleAnalysis"), resendViewport: $("#resendViewport"), exportMemory: $("#exportMemory"),
+  analysisState: $("#analysisState"), toggleAnalysis: $("#toggleAnalysis"), resendViewport: $("#resendViewport"), importMemory: $("#importMemory"), memoryInput: $("#memoryInput"), exportMemory: $("#exportMemory"),
   understandImage: $("#understandImage"), bubbleLayer: $("#bubbleLayer"),
   settingsButton: $("#settingsButton"), settingsDialog: $("#settingsDialog"), settingsForm: $("#settingsForm"),
   apiEndpoint: $("#apiEndpoint"), apiModel: $("#apiModel"), apiKey: $("#apiKey"), toast: $("#toast"),
@@ -87,8 +90,8 @@ const state = {
   pdf: null, fileName: "", documentId: "", memory: null, pages: new Map(),
   analysisEnabled: true, analysisTimer: 0,
   regionSignatures: new Set(), inFlightSignatures: new Set(), resetCoverageDocuments: new Set(), coverageEpochs: new Map(), bubbleStack: [], activeImageTasks: 0,
-  readerSettings: { language: "zh", focusHeight: 60, showFocusGuide: false, viewportPayloadMode: "image", imagePrecision: "balanced", quickLinkProvider: "wiki", quickLinkCustomLabel: "自定义", quickLinkCustomTemplate: "" }, textSelection: null,
-  analysisTasks: new Map(), questionTasks: new Map(), nextAnalysisTaskId: 0, progressTimer: 0,
+  readerSettings: { language: "zh", focusHeight: 60, showFocusGuide: true, viewportPayloadMode: "image", imagePrecision: "balanced", quickLinkProvider: "wiki", quickLinkCustomLabel: "自定义", quickLinkCustomTemplate: "" }, textSelection: null,
+  analysisTasks: new Map(), questionTasks: new Map(), nextAnalysisTaskId: 0, progressTimer: 0, errorAction: null,
 };
 
 ui.openFile.addEventListener("click", () => ui.fileInput.click());
@@ -100,10 +103,16 @@ $("#cancelSettings").addEventListener("click", cancelSettings);
 ui.settingsForm.addEventListener("submit", saveSettingsFromDialog);
 ui.settingsDialog.addEventListener("cancel", (event) => { event.preventDefault(); cancelSettings(); });
 $("#testApi").addEventListener("click", testApiConnection);
-$("#errorSettings").addEventListener("click", openSettings);
+$("#errorSettings").addEventListener("click", () => {
+  const action = state.errorAction;
+  if (action?.run) action.run();
+  else openSettings();
+});
 $("#dismissError").addEventListener("click", clearError);
 ui.toggleAnalysis.addEventListener("click", toggleAnalysis);
 ui.resendViewport.addEventListener("click", resendCurrentViewport);
+ui.importMemory.addEventListener("click", () => ui.memoryInput.click());
+ui.memoryInput.addEventListener("change", () => importMemory(ui.memoryInput.files?.[0]));
 ui.exportMemory.addEventListener("click", exportMemory);
 ui.understandImage.addEventListener("click", understandCurrentViewportImage);
 ui.selectionQuestion.addEventListener("pointerdown", (event) => event.preventDefault());
@@ -153,6 +162,7 @@ function applyInterfaceLanguage() {
   });
   ui.toggleAnalysis.title = t("暂停或继续智能标注", "Pause or resume smart annotation");
   ui.resendViewport.title = t("清除当前视野的发送记录并重新识别", "Clear and resend the current viewport");
+  ui.importMemory.title = t("导入当前 PDF memory", "Import memory for the current PDF");
   ui.exportMemory.title = t("导出当前 PDF memory", "Export the current PDF memory");
   ui.settingsButton.title = t("API 设置", "API settings");
   ui.understandImage.title = t("立即截取并理解当前视野", "Capture and understand the current viewport");
@@ -167,30 +177,93 @@ function responseLanguageInstruction() {
 
 async function initializeViewer() {
   await loadReaderSettings();
-  const source = new URLSearchParams(location.search).get("source");
-  if (source) await openPdfFromUrl(source);
+  const params = new URLSearchParams(location.search);
+  const source = params.get("source");
+  if (source) await openPdfFromUrl(source, params.get("cache"));
 }
 
-async function openPdfFromUrl(source) {
+async function openPdfFromUrl(source, cacheToken = "") {
   try {
     setStatus("正在直接加载 PDF…", "working");
     if (source.startsWith("file:")) {
       const allowed = await chrome.extension.isAllowedFileSchemeAccess();
       if (!allowed) throw new Error("请在 chrome://extensions 的插件详情中开启“允许访问文件网址”，然后重新打开本地 PDF。 ");
     }
-    const response = await fetch(source, { credentials: "include", cache: "default" });
-    if (!response.ok && response.status !== 0) throw new Error(`PDF 下载失败：HTTP ${response.status} ${response.statusText}`);
-    const contentType = response.headers.get("content-type") || "";
-    const buffer = await response.arrayBuffer();
+    const loaded = await loadPdfSource(source, cacheToken);
+    const { buffer, contentType, contentDisposition } = loaded;
     if (!buffer.byteLength) throw new Error("PDF 响应内容为空。 ");
-    const name = pdfFileName(source, response.headers.get("content-disposition") || "");
+    const name = pdfFileName(source, contentDisposition);
     const file = new File([buffer], name, { type: contentType || "application/pdf" });
     await openPdf(file);
   } catch (error) {
-    console.error(error);
-    setStatus("直接加载失败");
-    showError("无法直接打开 PDF", error);
+    console.warn("Handled direct PDF loading failure", error);
+    if (source.startsWith("file:")) {
+      const localError = new Error(t(
+        "无法读取本地 PDF。文件可能已被移动、删除。请重新选择该 PDF。",
+        "The local PDF could not be read. It may have been moved or deleted. Please choose it again.",
+      ));
+      setStatus(t("本地 PDF 已移动或不可访问", "Local PDF moved or unavailable"));
+      showError(t("无法直接打开 PDF", "Could not open PDF directly"), localError, {
+        label: t("重新选择 PDF", "Choose PDF again"),
+        run: () => ui.fileInput.click(),
+      });
+    } else {
+      setStatus("直接加载失败");
+      showError("无法直接打开 PDF", error);
+    }
   }
+}
+
+async function loadPdfSource(source, cacheToken = "") {
+  if (cacheToken) {
+    try {
+      const cache = await caches.open("paper-noter-local-pdf-v1");
+      const cacheUrl = chrome.runtime.getURL(`source-cache/${cacheToken}`);
+      const cached = await cache.match(cacheUrl);
+      if (cached) {
+        const buffer = await cached.arrayBuffer();
+        await cache.delete(cacheUrl);
+        if (buffer.byteLength) return {
+          buffer,
+          contentType: cached.headers.get("content-type") || "application/pdf",
+          contentDisposition: "",
+        };
+      }
+    } catch {
+      // Cache is only an optimization; continue through the normal readers.
+    }
+  }
+  try {
+    const response = await fetch(source, { credentials: "include", cache: "default" });
+    if (!response.ok && response.status !== 0) throw new Error(`PDF 下载失败：HTTP ${response.status} ${response.statusText}`);
+    return {
+      buffer: await response.arrayBuffer(),
+      contentType: response.headers.get("content-type") || "",
+      contentDisposition: response.headers.get("content-disposition") || "",
+    };
+  } catch (error) {
+    if (!source.startsWith("file:")) throw error;
+    return loadLocalPdfWithXhr(source);
+  }
+}
+
+function loadLocalPdfWithXhr(source) {
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open("GET", source, true);
+    request.responseType = "arraybuffer";
+    request.onload = () => {
+      if (request.response?.byteLength) {
+        resolve({
+          buffer: request.response,
+          contentType: request.getResponseHeader("content-type") || "application/pdf",
+          contentDisposition: request.getResponseHeader("content-disposition") || "",
+        });
+      } else reject(new Error("Local PDF response was empty"));
+    };
+    request.onerror = () => reject(new Error("Local PDF could not be read"));
+    request.send();
+  });
 }
 
 async function openPdf(file) {
@@ -202,7 +275,7 @@ async function openPdf(file) {
     ui.pages.replaceChildren();
 
     const buffer = await file.arrayBuffer();
-    state.documentId = await sha256(buffer);
+    const binarySha256 = await sha256(buffer);
     state.fileName = file.name;
     state.pdf = await pdfjsLib.getDocument({
       data: new Uint8Array(buffer),
@@ -212,24 +285,41 @@ async function openPdf(file) {
       wasmUrl: chrome.runtime.getURL("vendor/wasm/"),
       iccUrl: chrome.runtime.getURL("vendor/iccs/"),
     }).promise;
-    state.memory = await new PaperMemory(state.documentId).init({
+    let knownDocumentId = await PaperMemory.findDocumentByBinary(binarySha256);
+    let identity = { contentFingerprint: "", layoutFingerprint: "", sampledCharacters: 0 };
+    if (!knownDocumentId) {
+      setStatus(t("正在安全匹配本地 memory…", "Safely matching local memory…"), "working");
+      try {
+        identity = await computePdfIdentity(state.pdf);
+      } catch {
+        // Identity must never make an otherwise readable PDF fail to open.
+      }
+      knownDocumentId = await PaperMemory.resolveDocumentId(binarySha256, identity.layoutFingerprint);
+    }
+    state.documentId = knownDocumentId || binarySha256;
+    const memoryMeta = {
       fileName: file.name,
       pageCount: state.pdf.numPages,
       updatedAt: new Date().toISOString(),
-    });
+      binarySha256,
+    };
+    if (identity.contentFingerprint) memoryMeta.contentFingerprint = identity.contentFingerprint;
+    if (identity.layoutFingerprint) memoryMeta.layoutFingerprint = identity.layoutFingerprint;
+    state.memory = await new PaperMemory(state.documentId).init(memoryMeta);
     if (!state.resetCoverageDocuments.has(state.documentId)) {
       await state.memory.resetSentCoverage();
       state.resetCoverageDocuments.add(state.documentId);
     }
 
     for (const event of state.memory.events) {
-      if (event.region_signature) state.regionSignatures.add(event.region_signature);
+      if (event.region_signature && isAnnotationAnchorConsistent(event)) state.regionSignatures.add(event.region_signature);
     }
     await createPagePlaceholders();
     ui.workspace.classList.remove("empty");
     ui.documentTitle.textContent = file.name;
     ui.toggleAnalysis.disabled = false;
     ui.resendViewport.disabled = false;
+    ui.importMemory.disabled = false;
     ui.exportMemory.disabled = false;
     ui.understandImage.disabled = false;
     setStatus("本地 memory 已加载", "ready");
@@ -744,7 +834,7 @@ async function analyzeCurrentRegion({ force = false, regionOverride = null, rese
     const payloadDetail = `第 ${region.page} 页 · 文本 ${formatBytes(textBytes)}${region.image ? ` · 截图 ${formatBytes(imageBytes)} / 传输约 ${formatBytes(encodedImageBytes)} · ${precisionLabel(state.readerSettings.imagePrecision)}` : " · 无截图"}`;
     setAnalysisProgress(taskId, 2, region.image ? "截图已压缩，正在准备请求" : "文本载荷已准备", payloadDetail);
     const requestContent = [
-      { type: "text", text: `页面文本片段：${JSON.stringify(spanPayload)}\n返回格式：{"annotations":[{"kind":"term|keypoint","targets":[{"span_id":"...","start":0,"end":4}],"label":"原文名词或重点短标题","explanation":"简洁中文解释","context":"为什么在本文语境重要","secondary_terms":[{"term":"解释中出现的二级名词","explanation":"一句话解释","parent_concept":"上级概念"}]}]}。start/end是对应文本片段中的字符下标，end不包含；重点可覆盖多个完整片段，名词必须精确到词。名词最多5个，重点最多3个。` },
+      { type: "text", text: `页面文本片段：${JSON.stringify(spanPayload)}\n返回格式：{"annotations":[{"kind":"term|keypoint","targets":[{"span_id":"...","start":0,"end":4}],"label":"原文名词或重点短标题","explanation":"简洁中文解释","context":"为什么在本文语境重要","secondary_terms":[{"term":"解释中出现的二级名词","explanation":"一句话解释","parent_concept":"上级概念"}]}]}。start/end是对应文本片段中的字符下标，end不包含；重点可覆盖多个完整片段；名词必须精确到词，且 label 必须与 start/end 截出的原文完全一致。名词最多5个，重点最多3个。` },
     ];
     if (region.image) requestContent.push({ type: "image_url", image_url: { url: region.image } });
     setAnalysisProgress(taskId, 3, "请求已发出，等待模型响应", payloadDetail);
@@ -804,6 +894,7 @@ function findUnderlineInCurrentFocus() {
   const focusRect = getFocusRect(viewerRect);
   for (const annotation of state.memory.list()) {
     if (!["term", "keypoint"].includes(annotation.kind)) continue;
+    if (!isAnnotationAnchorConsistent(annotation)) continue;
     const record = state.pages.get(annotation.page);
     if (!record) continue;
     const pageRect = record.element.getBoundingClientRect();
@@ -838,7 +929,7 @@ async function repairAnnotations(annotations, region) {
     },
     {
       role: "user",
-      content: `文本片段：${JSON.stringify(spanPayload)}\n原始候选：${JSON.stringify(annotations)}\n请修复为：{"annotations":[{"kind":"term|keypoint","targets":[{"span_id":"给定id","start":0,"end":4}],"label":"原文中的文字","explanation":"中文解释","context":"本文语境","secondary_terms":[]}]}。如果原始候选为空但文本有学术语义，请选择1至3个最值得标注的内容。start/end必须是对应片段的有效字符下标。`,
+      content: `文本片段：${JSON.stringify(spanPayload)}\n原始候选：${JSON.stringify(annotations)}\n请修复为：{"annotations":[{"kind":"term|keypoint","targets":[{"span_id":"给定id","start":0,"end":4}],"label":"原文中的文字","explanation":"中文解释","context":"本文语境","secondary_terms":[]}]}。如果原始候选为空但文本有学术语义，请选择1至3个最值得标注的内容。start/end必须是对应片段的有效字符下标；名词 label 必须与 start/end 截出的原文完全一致。`,
     },
   ]);
   const repaired = parseJsonResponse(extractAssistantText(response));
@@ -863,22 +954,31 @@ async function saveModelAnnotation(annotation, region, signature, memory) {
     const hasRange = Number.isFinite(numericStart) && Number.isFinite(numericEnd) && numericEnd > numericStart;
     let start = clamp(hasRange ? numericStart : 0, 0, textLength);
     let end = clamp(hasRange ? numericEnd : textLength, start, textLength);
-    if (kind === "term" && !hasRange) {
-      const found = item.text.toLocaleLowerCase().indexOf(String(annotation.label || "").toLocaleLowerCase());
-      if (found >= 0) { start = found; end = found + String(annotation.label).length; }
+    if (kind === "term") {
+      const exact = findExactTermRange(item.text, annotation.label, start);
+      if (exact) {
+        start = exact.start;
+        end = exact.end;
+      } else {
+        const alternate = region.spans.map((candidate) => ({
+          item: candidate,
+          range: findExactTermRange(candidate.text, annotation.label),
+        })).find((candidate) => candidate.range);
+        if (!alternate) return null;
+        return buildMatchedTextRange(alternate.item, alternate.range.start, alternate.range.end, region.record);
+      }
     }
     if (end <= start) return null;
-    const [x1, y1, x2, y2] = item.box;
-    const width = x2 - x1;
-    return { ...item, selectedText: item.text.slice(start, end), box: [x1 + width * start / textLength, y1, x1 + width * end / textLength, y2] };
+    return buildMatchedTextRange(item, start, end, region.record);
   }).filter(Boolean);
   if (!matched.length || !kind) return false;
   const label = String(annotation.label || matched.map((item) => item.text).join(" ")).slice(0, 240);
-  const id = `${kind}_${region.page}_${simpleHash(`${label}:${JSON.stringify(matched.map((item) => item.box))}`)}`;
+  const bboxes = matched.flatMap((item) => item.boxes);
+  const id = `${kind}_${region.page}_${simpleHash(`${label}:${JSON.stringify(bboxes)}`)}`;
   await memory.append({
     event: "annotation_upsert", id, kind, page: region.page,
     region_signature: signature,
-    anchor: { quote: matched.map((item) => item.selectedText || item.text).join(" "), bboxes: matched.map((item) => item.box) },
+    anchor: { quote: matched.map((item) => item.selectedText || item.text).join(" "), bboxes },
     content: {
       label,
       explanation: String(annotation.explanation || ""),
@@ -888,6 +988,52 @@ async function saveModelAnnotation(annotation, region, signature, memory) {
     source: "viewport_mllm",
   });
   return true;
+}
+
+function buildMatchedTextRange(item, start, end, record) {
+  const boxes = getTextRangeBoxes(item, start, end, record);
+  if (!boxes.length) return null;
+  return { ...item, selectedText: item.text.slice(start, end), boxes };
+}
+
+function getTextRangeBoxes(item, start, end, record) {
+  const pageRect = record?.element?.getBoundingClientRect();
+  const startPoint = textOffsetPoint(item.element, start);
+  const endPoint = textOffsetPoint(item.element, end);
+  if (pageRect?.width && pageRect?.height && startPoint && endPoint) {
+    try {
+      const range = document.createRange();
+      range.setStart(startPoint.node, startPoint.offset);
+      range.setEnd(endPoint.node, endPoint.offset);
+      const boxes = [...range.getClientRects()].filter((rect) => rect.width > .25 && rect.height > .25).map((rect) => ([
+        clamp((rect.left - pageRect.left) / pageRect.width, 0, 1),
+        clamp((rect.top - pageRect.top) / pageRect.height, 0, 1),
+        clamp((rect.right - pageRect.left) / pageRect.width, 0, 1),
+        clamp((rect.bottom - pageRect.top) / pageRect.height, 0, 1),
+      ]));
+      if (boxes.length) return boxes;
+    } catch (error) {
+      console.warn("Fell back to proportional annotation geometry", error);
+    }
+  }
+  const textLength = Math.max(1, item.text.length);
+  const [x1, y1, x2, y2] = item.box;
+  const width = x2 - x1;
+  return [[x1 + width * start / textLength, y1, x1 + width * end / textLength, y2]];
+}
+
+function textOffsetPoint(element, sourceOffset) {
+  if (!element) return null;
+  const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+  let remaining = Math.max(0, sourceOffset);
+  let last = null;
+  while (walker.nextNode()) {
+    const node = walker.currentNode;
+    last = node;
+    if (remaining <= node.data.length) return { node, offset: remaining };
+    remaining -= node.data.length;
+  }
+  return last ? { node: last, offset: last.data.length } : null;
 }
 
 function normalizeAnnotationKind(value) {
@@ -925,7 +1071,7 @@ function renderPageAnnotations(pageNumber) {
   if (!record?.rendered || !state.memory) return;
   const layer = record.element.querySelector(".annotation-layer");
   layer.replaceChildren();
-  for (const annotation of state.memory.list().filter((item) => item.page === pageNumber)) {
+  for (const annotation of state.memory.list().filter((item) => item.page === pageNumber && isAnnotationAnchorConsistent(item))) {
     const boxes = annotation.anchor?.bboxes || (annotation.anchor?.bbox ? [annotation.anchor.bbox] : []);
     for (const box of boxes) {
       const mark = document.createElement("button");
@@ -953,6 +1099,7 @@ function renderSentCoverage(pageNumber) {
   for (const [start, end] of state.memory.getSentCoverage(pageNumber)) {
     const region = document.createElement("div");
     region.className = "sent-coverage-region";
+    region.style.animationDelay = `${synchronizedAnimationDelay(performance.now(), SENT_COVERAGE_FULL_CYCLE_MS)}ms`;
     region.style.top = `${start * 100}%`;
     region.style.height = `${Math.max(0, end - start) * 100}%`;
     layer.append(region);
@@ -970,6 +1117,7 @@ function findAnnotationsAtPoint(pageNumber, clientX, clientY, primary = null) {
   const matches = new Map(primary ? [[primary.id, primary]] : []);
   for (const annotation of state.memory.list()) {
     if (annotation.page !== pageNumber || !["term", "keypoint"].includes(annotation.kind)) continue;
+    if (!isAnnotationAnchorConsistent(annotation)) continue;
     const boxes = annotation.anchor?.bboxes || (annotation.anchor?.bbox ? [annotation.anchor.bbox] : []);
     if (boxes.some(([x1, y1, x2, y2]) => x >= x1 && x <= x2 && y >= y1 - verticalTolerance && y <= y2 + verticalTolerance)) {
       matches.set(annotation.id, annotation);
@@ -1056,6 +1204,8 @@ function openAnnotationBubble(annotation, anchorRect) {
 function openChildBubble(parentIndex, term, sourceButton) {
   state.bubbleStack = state.bubbleStack.slice(0, parentIndex + 1);
   const parent = state.bubbleStack[parentIndex];
+  const conceptPath = [...parent.conceptPath, term.term];
+  if (state.memory?.isBubbleDeleted(questionBindingKey(parent.rootAnnotationId, conceptPath))) return;
   const bubble = {
     id: `child_${simpleHash(term.term)}`,
     title: term.term,
@@ -1065,7 +1215,7 @@ function openChildBubble(parentIndex, term, sourceButton) {
     isTerm: true,
     page: parent.page,
     rootAnnotationId: parent.rootAnnotationId,
-    conceptPath: [...parent.conceptPath, term.term],
+    conceptPath,
     anchorRect: sourceButton.getBoundingClientRect(),
   };
   hydrateBubbleQuestion(bubble);
@@ -1106,7 +1256,7 @@ function renderBubbles() {
     element.dataset.depth = String(actualIndex);
     element.dataset.bubbleIndex = String(actualIndex);
     const path = state.bubbleStack.slice(0, actualIndex + 1).map((item) => item.title).join(" › ");
-    element.innerHTML = `<div class="bubble-path"></div><div class="bubble-head"><h3></h3><button class="ask" title="${t("结合当前PDF视野详细解释", "Explain using the current PDF viewport")}">?</button><button class="close" title="${t("关闭", "Close")}">×</button></div><div class="bubble-body"></div>`;
+    element.innerHTML = `<div class="bubble-topbar"><div class="bubble-path"></div><div class="bubble-controls"><button class="delete" title="${t("删除气泡", "Delete bubble")}" aria-label="${t("删除气泡", "Delete bubble")}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3m-9 0 1 13h10l1-13M10 11v5m4-5v5" /></svg></button><button class="close" title="${t("关闭", "Close")}">×</button></div></div><div class="bubble-head"><h3></h3><button class="ask" title="${t("结合当前PDF视野详细解释", "Explain using the current PDF viewport")}">?</button></div><div class="bubble-body"></div>`;
     const pathElement = element.querySelector(".bubble-path");
     if (bubble.isTerm) {
       const quickLink = buildQuickLink(bubble.title, state.readerSettings);
@@ -1145,6 +1295,9 @@ function renderBubbles() {
       : bubble.questionEvent ? t("展开或收起已保存的追问", "Expand or collapse the saved follow-up") : t("结合当前 PDF 视野追问", "Ask using the current PDF viewport");
     ask.disabled = Boolean(bubble.questionLoading);
     ask.addEventListener("click", () => handleBubbleQuestion(actualIndex, ask));
+    const deleteButton = element.querySelector(".delete");
+    deleteButton.disabled = Boolean(bubble.questionLoading);
+    deleteButton.addEventListener("click", () => deleteBubble(actualIndex));
     element.querySelector(".close").addEventListener("click", () => {
       state.bubbleStack = state.bubbleStack.slice(0, actualIndex);
       renderBubbles();
@@ -1188,7 +1341,7 @@ function renderBubbleAnnotatedText(container, text, bubble, bubbleIndex, field, 
     const segment = value.slice(start, end);
     const active = annotations.filter((annotation) => annotation.anchor.start < end && annotation.anchor.end > start);
     if (!active.length) {
-      appendRichBubbleText(container, segment, start, includeSecondaryTerms ? bubble.secondaryTerms : [], (term, button) => openChildBubble(bubbleIndex, term, button));
+      appendRichBubbleText(container, segment, start, includeSecondaryTerms ? visibleSecondaryTerms(bubble) : [], (term, button) => openChildBubble(bubbleIndex, term, button));
       continue;
     }
     const mark = document.createElement("span");
@@ -1210,6 +1363,12 @@ function renderBubbleAnnotatedText(container, text, bubble, bubbleIndex, field, 
     });
     container.append(mark);
   }
+}
+
+function visibleSecondaryTerms(bubble) {
+  return bubble.secondaryTerms.filter((term) => !state.memory?.isBubbleDeleted(
+    questionBindingKey(bubble.rootAnnotationId, [...bubble.conceptPath, term.term]),
+  ));
 }
 
 function appendRichBubbleText(container, text, baseOffset, terms, onTermClick) {
@@ -1248,6 +1407,7 @@ function openBubbleNote(bubbleIndex, annotation, anchorRect) {
     rootAnnotationId: parent.rootAnnotationId,
     conceptPath: [...parent.conceptPath, annotation.content?.label || annotation.anchor?.quote || "标注"],
     anchorRect,
+    annotation,
   };
   hydrateBubbleQuestion(bubble);
   state.bubbleStack.push(bubble);
@@ -1363,6 +1523,57 @@ function openQuestionBubble(parentIndex, anchorRect) {
   renderBubbles();
 }
 
+async function deleteBubble(index) {
+  const bubble = state.bubbleStack[index];
+  if (!bubble || !state.memory || bubble.questionLoading) return;
+  const confirmed = window.confirm(t(
+    `确定删除气泡“${bubble.title}”吗？删除会保存到当前 PDF memory。`,
+    `Delete the bubble “${bubble.title}”? This deletion will be saved to the current PDF memory.`,
+  ));
+  if (!confirmed) return;
+
+  try {
+    if (bubble.questionParentBinding) {
+      await state.memory.append({
+        event: "bubble_question_delete",
+        id: bubble.id,
+        binding_key: bubble.questionParentBinding,
+        parent_annotation_id: bubble.rootAnnotationId,
+      });
+      const parent = state.bubbleStack[index - 1];
+      if (parent?.questionBinding === bubble.questionParentBinding) parent.questionEvent = null;
+    } else if (bubble.annotation?.event === "bubble_annotation_upsert") {
+      await state.memory.append({
+        event: "bubble_annotation_delete",
+        id: bubble.annotation.id,
+        binding_key: bubble.annotation.binding_key,
+        parent_annotation_id: bubble.rootAnnotationId,
+      });
+    } else if (index === 0 && bubble.annotation) {
+      await state.memory.append({
+        event: "annotation_delete",
+        id: bubble.annotation.id,
+        page: bubble.page,
+      });
+      renderPageAnnotations(bubble.page);
+    } else {
+      await state.memory.append({
+        event: "bubble_delete",
+        id: bubble.id,
+        binding_key: bubble.questionBinding,
+        parent_annotation_id: bubble.rootAnnotationId,
+        concept_path: bubble.conceptPath,
+      });
+    }
+    state.bubbleStack = state.bubbleStack.slice(0, index);
+    renderBubbles();
+    toast(t("气泡已删除", "Bubble deleted"));
+  } catch (error) {
+    console.warn("Handled bubble deletion failure", error);
+    toast(t(`删除失败：${error.message}`, `Delete failed: ${error.message}`), true);
+  }
+}
+
 async function requestBubbleQuestion(bubble, anchorRect) {
   const taskMemory = state.memory;
   const taskDocumentId = state.documentId;
@@ -1415,7 +1626,7 @@ async function requestBubbleQuestion(bubble, anchorRect) {
       openQuestionBubble(currentIndex, currentButton?.getBoundingClientRect() || anchorRect);
     }
   } catch (error) {
-    console.error(error);
+    console.warn("Handled bubble question failure", error);
     state.questionTasks.delete(registryKey);
     syncOpenBubbleQuestion(binding, { loading: false });
     failAnalysisProgress(taskId, error);
@@ -1605,6 +1816,47 @@ async function exportMemory() {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+async function importMemory(file) {
+  if (!file || !state.memory || !state.pdf) return;
+  try {
+    let result;
+    try {
+      result = await state.memory.importJsonl(file);
+    } catch (error) {
+      if (error?.code !== "MEMORY_LEGACY_CONFIRMATION_REQUIRED") throw error;
+      const accepted = window.confirm(t(
+        "这是旧版 memory，没有 PDF 哈希，无法自动确认它属于当前论文。仍要导入吗？",
+        "This is a legacy memory without a PDF hash, so its paper cannot be verified automatically. Import it anyway?",
+      ));
+      if (!accepted) return;
+      result = await state.memory.importJsonl(file, { allowLegacy: true });
+    }
+
+    for (const event of state.memory.events) {
+      if (event.region_signature) state.regionSignatures.add(event.region_signature);
+    }
+    closeBubbles();
+    for (const pageNumber of state.pages.keys()) renderPageAnnotations(pageNumber);
+    if (!result.imported && !result.skipped) {
+      toast(t("该 memory 暂时没有可导入的标注", "This memory does not contain any annotations yet"));
+    } else {
+      toast(t(
+        `已导入 ${result.imported} 条 memory，跳过 ${result.skipped} 条重复记录`,
+        `Imported ${result.imported} memory records; skipped ${result.skipped} duplicates`,
+      ));
+    }
+  } catch (error) {
+    console.warn("Handled memory import failure", error);
+    if (error?.code === "MEMORY_DOCUMENT_MISMATCH") {
+      toast(t("导入失败：该 memory 属于另一份 PDF", "Import failed: this memory belongs to a different PDF"), true);
+    } else {
+      toast(t(`导入失败：${error.message}`, `Import failed: ${error.message}`), true);
+    }
+  } finally {
+    ui.memoryInput.value = "";
+  }
+}
+
 function cropCanvas(canvas, normalizedBox, precision = "balanced") {
   const [x1, y1, x2, y2] = normalizedBox;
   const sx = Math.floor(x1 * canvas.width), sy = Math.floor(y1 * canvas.height);
@@ -1645,7 +1897,7 @@ async function loadReaderSettings() {
   state.readerSettings = {
     language: value.language === "en" ? "en" : "zh",
     focusHeight: clamp(Number(value.focusHeight) || 60, 20, 100),
-    showFocusGuide: Boolean(value.showFocusGuide),
+    showFocusGuide: value.showFocusGuide === undefined ? true : Boolean(value.showFocusGuide),
     viewportPayloadMode: value.viewportPayloadMode === "text" ? "text" : "image",
     imagePrecision: IMAGE_PRECISION[value.imagePrecision] ? value.imagePrecision : "balanced",
     ...normalizeQuickLinkSettings(value),
@@ -1838,12 +2090,19 @@ function simpleHash(value) { let hash = 2166136261; for (let index = 0; index < 
 function setStatus(text, className = "") { ui.analysisState.textContent = localizeRuntimeText(text); ui.analysisState.className = `status ${className}`.trim(); ui.analysisState.title = ""; }
 let toastTimer;
 function toast(message, error = false) { clearTimeout(toastTimer); ui.toast.textContent = localizeRuntimeText(message); ui.toast.className = `toast show${error ? " error" : ""}`; toastTimer = setTimeout(() => { ui.toast.className = "toast"; }, 4200); }
-function showError(title, error) {
+function showError(title, error, action = null) {
   const detail = error?.message || String(error || "未知错误");
   ui.errorTitle.textContent = localizeRuntimeText(title);
   ui.errorDetail.textContent = detail;
+  state.errorAction = action;
+  $("#errorSettings").textContent = action?.label || t("检查 API 设置", "Check API settings");
   ui.errorPanel.classList.remove("hidden");
   ui.errorPanel.title = detail;
   toast(detail, true);
 }
-function clearError() { ui.errorPanel.classList.add("hidden"); ui.errorDetail.textContent = ""; }
+function clearError() {
+  ui.errorPanel.classList.add("hidden");
+  ui.errorDetail.textContent = "";
+  state.errorAction = null;
+  $("#errorSettings").textContent = t("检查 API 设置", "Check API settings");
+}

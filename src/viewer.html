@@ -14,11 +14,13 @@
         <button id="openFile" class="button primary" data-i18n="openPdf">打开 PDF</button>
         <input id="fileInput" type="file" accept="application/pdf,.pdf" hidden />
       </div>
-      <span id="documentTitle" class="document-title" data-i18n="noPaper">尚未打开论文</span>
+      <span id="documentTitle" class="document-title" data-i18n="noPaper">尚未打开文档</span>
       <div class="toolbar-actions">
         <span id="analysisState" class="status" data-i18n="waitingPdf">等待 PDF</span>
         <button id="toggleAnalysis" class="icon-button" title="暂停或继续智能标注" disabled>◉</button>
         <button id="resendViewport" class="icon-button" title="清除当前视野的发送记录并重新识别" disabled>↻</button>
+        <button id="importMemory" class="icon-button" title="导入当前 PDF memory" disabled>⇧</button>
+        <input id="memoryInput" type="file" accept=".jsonl,.ndjson,application/x-ndjson,application/json" hidden />
         <button id="exportMemory" class="icon-button" title="导出当前 PDF memory" disabled>⇩</button>
         <button id="settingsButton" class="icon-button" title="API 设置">⚙</button>
       </div>
@@ -33,7 +35,6 @@
       <section id="viewer" class="viewer">
         <div id="emptyState" class="empty-state">
           <div class="empty-icon">PDF</div>
-          <h1 data-i18n="emptyTitle">把论文放进来，专注眼前这一页</h1>
           <p data-i18n="emptyDescription">直接打开网页或本地 PDF 即可自动进入阅读器，也可以在这里手动选择文件。</p>
           <button id="emptyOpenFile" class="button primary" data-i18n="choosePdf">选择 PDF</button>
         </div>
@@ -69,7 +70,7 @@
           <div class="section-title"><strong data-i18n="focusRange">视野范围</strong><output id="focusHeightValue">60%</output></div>
           <input id="focusHeight" class="range-input" type="range" min="20" max="100" step="5" value="60" />
           <div class="range-labels"><span data-i18n="faster">更快 · 20%</span><span data-i18n="moreContext">更多上下文 · 100%</span></div>
-          <label class="checkbox-label"><input id="showFocusGuide" type="checkbox" /><span data-i18n="showFocus">显示视野边框，并稍微调暗视野外内容</span></label>
+          <label class="checkbox-label"><input id="showFocusGuide" type="checkbox" checked /><span data-i18n="showFocus">显示视野边框，并稍微调暗视野外内容</span></label>
         </section>
         <section class="settings-section">
           <div class="section-title"><strong data-i18n="payloadHeading">自动分析发送内容</strong></div>

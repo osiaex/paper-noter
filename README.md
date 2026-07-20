@@ -72,7 +72,7 @@ paper-memory/<pdf_sha256>/
   assets/*.webp
 ```
 
-卸载扩展或清除扩展数据可能删除本地 memory。请通过工具栏导出按钮备份重要内容。
+卸载扩展或清除扩展数据可能删除本地 memory。请通过工具栏的 ⇩ 导出按钮备份；在另一台设备打开同一份 PDF 后，点击 ⇧ 即可导入。新版 JSONL 首行包含 PDF SHA-256、文本指纹和布局指纹。插件仅在文件哈希或布局指纹一致时自动复用带坐标的标注；纯文本指纹不会自动绑定旧坐标。身份计算最多抽样 5 页，失败时不会阻止 PDF 正常打开；旧版 JSONL 仍可在确认后导入。
 
 ### 从源码构建
 
@@ -143,7 +143,7 @@ paper-memory/<pdf_sha256>/
   assets/*.webp
 ```
 
-Uninstalling the extension or clearing its data may remove local memory. Export important memory from the toolbar first.
+Uninstalling the extension or clearing its data may remove local memory. Use ⇩ in the toolbar to export it, then open the same PDF on another device and click ⇧ to import. New JSONL exports carry the PDF SHA-256 plus text and layout fingerprints. Coordinate-bearing annotations are reused automatically only when the exact file or its layout fingerprint matches; a text-only match never binds old coordinates automatically. Identity calculation samples at most five pages and cannot block normal PDF opening. Legacy JSONL files can still be imported after confirmation.
 
 ### Build from source
 

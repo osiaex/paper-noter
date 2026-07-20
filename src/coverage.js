@@ -35,6 +35,14 @@ export function subtractIntervals(source, removed) {
   return mergeIntervals(source.flatMap((interval) => subtractCoverage(interval, removed, 0)));
 }
 
+export function synchronizedAnimationDelay(now, cycleMs) {
+  const cycle = Number(cycleMs);
+  if (!Number.isFinite(cycle) || cycle <= 0) return 0;
+  const time = Number.isFinite(Number(now)) ? Number(now) : 0;
+  const phase = ((time % cycle) + cycle) % cycle;
+  return phase === 0 ? 0 : -phase;
+}
+
 function clamp01(value) {
   return Math.min(1, Math.max(0, Number(value) || 0));
 }

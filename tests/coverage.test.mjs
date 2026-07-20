@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { intervalLength, mergeIntervals, subtractCoverage, subtractIntervals } from "../src/coverage.js";
+import { intervalLength, mergeIntervals, subtractCoverage, subtractIntervals, synchronizedAnimationDelay } from "../src/coverage.js";
 
 test("merges overlapping and nearly touching viewport intervals", () => {
   assert.deepEqual(mergeIntervals([[.2, .4], [.39, .6], [.602, .8]]), [[.2, .8]]);
@@ -17,4 +17,10 @@ test("ignores tiny boundary slivers", () => {
 
 test("moves only a completed reservation out of sent coverage", () => {
   assert.deepEqual(subtractIntervals([[.1, .8]], [[.3, .5]]), [[.1, .3], [.5, .8]]);
+});
+
+test("aligns newly inserted coverage animations to a shared cycle", () => {
+  assert.equal(synchronizedAnimationDelay(0, 2500), 0);
+  assert.equal(synchronizedAnimationDelay(750, 2500), -750);
+  assert.equal(synchronizedAnimationDelay(3250, 2500), -750);
 });

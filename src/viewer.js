@@ -1,5 +1,5 @@
 import * as pdfjsLib from "./vendor/pdf.mjs";
-import { extractAssistantText, loadApiSettings, parseJsonResponse, requestVision, saveApiSettings } from "./api.js";
+import { authorizeApiProfile, extractAssistantText, loadApiProfileStore, loadApiSettings, parseJsonResponse, requestVision, saveApiProfileStore } from "./api.js";
 import { PaperMemory, sha256 } from "./memory.js";
 import { pdfFileName } from "./pdf-routing.js";
 import { intervalLength, synchronizedAnimationDelay } from "./coverage.js";
@@ -23,6 +23,8 @@ const IMAGE_PRECISION = {
 };
 const UI_TEXT = {
   zh: {
+    apiProfiles: "API 配置",
+    activeApiProfile: "当前启用的 API",
     openPdf: "打开 PDF", noPaper: "尚未打开文档", waitingPdf: "等待 PDF", understandImage: "理解图片",
     emptyDescription: "直接打开网页或本地 PDF 即可自动进入阅读器，也可以在这里手动选择文件。", choosePdf: "选择 PDF",
     connectModel: "连接模型", apiSettings: "API 设置", endpoint: "OpenAI 兼容接口地址", modelName: "模型名称",
@@ -33,6 +35,8 @@ const UI_TEXT = {
     testConnection: "测试连接", cancel: "取消", save: "保存", analysisFailed: "分析失败", checkApi: "检查 API 设置",
   },
   en: {
+    apiProfiles: "API profiles",
+    activeApiProfile: "Active API",
     openPdf: "Open PDF", noPaper: "No document open", waitingPdf: "Waiting for PDF", understandImage: "Understand image",
     emptyDescription: "Open a web or local PDF directly, or choose a file here.", choosePdf: "Choose PDF",
     connectModel: "Connect model", apiSettings: "API settings", endpoint: "OpenAI-compatible endpoint", modelName: "Model name",
@@ -76,6 +80,7 @@ const ui = {
   statusShell: $("#statusShell"), analysisState: $("#analysisState"), dismissStatus: $("#dismissStatus"), toggleAnalysis: $("#toggleAnalysis"), resendViewport: $("#resendViewport"), importMemory: $("#importMemory"), memoryInput: $("#memoryInput"), exportMemory: $("#exportMemory"),
   understandImage: $("#understandImage"), bubbleLayer: $("#bubbleLayer"),
   settingsButton: $("#settingsButton"), settingsDialog: $("#settingsDialog"), settingsForm: $("#settingsForm"),
+  apiProfileSelect: $("#apiProfileSelect"), addApiProfile: $("#addApiProfile"), renameApiProfile: $("#renameApiProfile"), deleteApiProfile: $("#deleteApiProfile"),
   apiEndpoint: $("#apiEndpoint"), apiModel: $("#apiModel"), apiKey: $("#apiKey"), toast: $("#toast"),
   apiTestResult: $("#apiTestResult"), errorPanel: $("#errorPanel"), errorTitle: $("#errorTitle"), errorDetail: $("#errorDetail"),
   focusHeight: $("#focusHeight"), focusHeightValue: $("#focusHeightValue"), showFocusGuide: $("#showFocusGuide"),
@@ -89,16 +94,20 @@ const ui = {
 
 const state = {
   pdf: null, fileName: "", documentId: "", memory: null, pages: new Map(),
-  analysisEnabled: true, analysisTimer: 0,
+  analysisEnabled: true, analysisTimer: 0, pdfLoading: false,
   regionSignatures: new Set(), inFlightSignatures: new Set(), resetCoverageDocuments: new Set(), coverageEpochs: new Map(), bubbleStack: [], activeImageTasks: 0,
   readerSettings: { language: "zh", focusHeight: 60, showFocusGuide: true, viewportPayloadMode: "image", imagePrecision: "balanced", quickLinkProvider: "wiki", quickLinkCustomLabel: "自定义", quickLinkCustomTemplate: "" }, textSelection: null,
-  analysisTasks: new Map(), questionTasks: new Map(), nextAnalysisTaskId: 0, progressTimer: 0, errorAction: null, dismissedStatusKey: "",
+  analysisTasks: new Map(), questionTasks: new Map(), nextAnalysisTaskId: 0, progressTimer: 0, errorAction: null, dismissedStatusKey: "", apiProfileStore: null,
 };
 
 ui.openFile.addEventListener("click", () => ui.fileInput.click());
 ui.emptyOpenFile.addEventListener("click", () => ui.fileInput.click());
 ui.fileInput.addEventListener("change", () => ui.fileInput.files?.[0] && openPdf(ui.fileInput.files[0]));
 ui.settingsButton.addEventListener("click", openSettings);
+ui.apiProfileSelect.addEventListener("change", switchApiProfile);
+ui.addApiProfile.addEventListener("click", addApiProfile);
+ui.renameApiProfile.addEventListener("click", renameApiProfile);
+ui.deleteApiProfile.addEventListener("click", deleteApiProfile);
 $("#closeSettings").addEventListener("click", cancelSettings);
 $("#cancelSettings").addEventListener("click", cancelSettings);
 ui.settingsForm.addEventListener("submit", saveSettingsFromDialog);
@@ -167,6 +176,24 @@ function applyInterfaceLanguage() {
   ui.importMemory.title = t("导入当前 PDF memory", "Import memory for the current PDF");
   ui.exportMemory.title = t("导出当前 PDF memory", "Export the current PDF memory");
   ui.settingsButton.title = t("API 设置", "API settings");
+  ui.apiEndpoint.placeholder = t("https://api.openai.com/v1 或完整 chat/completions 地址", "https://api.openai.com/v1 or a full chat/completions URL");
+  ui.apiModel.placeholder = t("支持视觉输入的模型", "Vision-capable model");
+  ui.quickLinkCustomLabel.placeholder = t("例如：My Search", "For example: My Search");
+  $("#closeSettings").title = t("关闭设置", "Close settings");
+  $("#closeSettings").setAttribute("aria-label", $("#closeSettings").title);
+  $("#dismissError").title = t("关闭", "Close");
+  $("#dismissError").setAttribute("aria-label", $("#dismissError").title);
+  const apiProfileLabels = {
+    select: t("当前 API 配置", "Current API profile"),
+    add: t("新增 API 配置", "Add API profile"),
+    rename: t("重命名 API 配置", "Rename API profile"),
+    remove: t("删除 API 配置", "Delete API profile"),
+  };
+  ui.apiProfileSelect.setAttribute("aria-label", apiProfileLabels.select);
+  for (const [element, label] of [[ui.addApiProfile, apiProfileLabels.add], [ui.renameApiProfile, apiProfileLabels.rename], [ui.deleteApiProfile, apiProfileLabels.remove]]) {
+    element.title = label;
+    element.setAttribute("aria-label", label);
+  }
   ui.dismissStatus.title = t("关闭当前状态", "Dismiss current status");
   ui.dismissStatus.setAttribute("aria-label", ui.dismissStatus.title);
   ui.understandImage.title = t("立即截取并理解当前视野", "Capture and understand the current viewport");
@@ -187,6 +214,7 @@ async function initializeViewer() {
 }
 
 async function openPdfFromUrl(source, cacheToken = "") {
+  beginPdfLoading();
   try {
     setStatus("正在直接加载 PDF…", "working");
     if (source.startsWith("file:")) {
@@ -200,6 +228,7 @@ async function openPdfFromUrl(source, cacheToken = "") {
     const file = new File([buffer], name, { type: contentType || "application/pdf" });
     await openPdf(file);
   } catch (error) {
+    endPdfLoading(false);
     console.warn("Handled direct PDF loading failure", error);
     if (source.startsWith("file:")) {
       const localError = new Error(t(
@@ -271,6 +300,7 @@ function loadLocalPdfWithXhr(source) {
 }
 
 async function openPdf(file) {
+  beginPdfLoading();
   try {
     setStatus("正在打开…", "working");
     closeBubbles();
@@ -328,16 +358,17 @@ async function openPdf(file) {
     ui.workspace.classList.remove("empty");
     ui.documentTitle.textContent = pdfTitle;
     document.title = pdfTitle;
-    ui.toggleAnalysis.disabled = false;
+    endPdfLoading(true);
     ui.resendViewport.disabled = false;
     ui.importMemory.disabled = false;
     ui.exportMemory.disabled = false;
     ui.understandImage.disabled = false;
-    setStatus("本地 memory 已加载", "ready");
+    setStatus(state.analysisEnabled ? "本地 memory 已加载" : "智能标注已暂停", state.analysisEnabled ? "ready" : "");
     clearError();
     updateFocusGuide();
     scheduleAnalysis(900);
   } catch (error) {
+    endPdfLoading(false);
     console.error(error);
     showError("PDF 打开失败", error);
     setStatus("打开失败");
@@ -432,12 +463,25 @@ function handleViewerScroll() {
 function scheduleAnalysis(delay = VIEWPORT_SETTLE_MS) {
   clearTimeout(state.analysisTimer);
   closeBubbles();
-  if (!state.analysisEnabled || !state.pdf) return;
+  if (!state.analysisEnabled || !state.pdf || state.pdfLoading) return;
   state.analysisTimer = setTimeout(() => analyzeCurrentRegion(), delay);
+}
+
+function beginPdfLoading() {
+  state.pdfLoading = true;
+  clearTimeout(state.analysisTimer);
+  ui.toggleAnalysis.disabled = false;
+  ui.toggleAnalysis.textContent = state.analysisEnabled ? "◉" : "○";
+}
+
+function endPdfLoading(opened) {
+  state.pdfLoading = false;
+  ui.toggleAnalysis.disabled = !opened && !state.pdf;
 }
 
 function toggleAnalysis() {
   state.analysisEnabled = !state.analysisEnabled;
+  if (!state.analysisEnabled) clearTimeout(state.analysisTimer);
   ui.toggleAnalysis.textContent = state.analysisEnabled ? "◉" : "○";
   setStatus(state.analysisEnabled ? "智能标注已开启" : "智能标注已暂停", state.analysisEnabled ? "ready" : "");
   if (state.analysisEnabled) scheduleAnalysis(200);
@@ -1750,11 +1794,129 @@ async function understandViewportImage(viewportRect, taskContext) {
     return target.record.pageNumber;
 }
 
+function syncActiveApiProfileFromForm() {
+  if (!state.apiProfileStore) return;
+  const target = currentApiProfileDraft();
+  if (!target) return;
+  Object.assign(target, {
+    endpoint: ui.apiEndpoint.value.trim(),
+    model: ui.apiModel.value.trim(),
+    apiKey: ui.apiKey.value.trim(),
+  });
+}
+
+function currentApiProfileDraft() {
+  const store = state.apiProfileStore;
+  if (!store) return null;
+  return store.profiles.find((profile) => profile.id === store.activeProfileId) || store.profiles[0] || null;
+}
+
+function fillApiProfileForm() {
+  const profile = currentApiProfileDraft();
+  if (!profile) return;
+  ui.apiEndpoint.value = profile.endpoint || "";
+  ui.apiModel.value = profile.model || "";
+  ui.apiKey.value = profile.apiKey || "";
+}
+
+function renderApiProfileSelector({ fillForm = true } = {}) {
+  const store = state.apiProfileStore;
+  if (!store) return;
+  ui.apiProfileSelect.replaceChildren(...store.profiles.map((profile) => {
+    const option = document.createElement("option");
+    option.value = profile.id;
+    option.textContent = profile.name;
+    return option;
+  }));
+  ui.apiProfileSelect.value = store.activeProfileId;
+  ui.deleteApiProfile.disabled = store.profiles.length <= 1;
+  if (fillForm) fillApiProfileForm();
+}
+
+function switchApiProfile() {
+  if (!state.apiProfileStore) return;
+  syncActiveApiProfileFromForm();
+  state.apiProfileStore.activeProfileId = ui.apiProfileSelect.value;
+  fillApiProfileForm();
+  ui.apiTestResult.textContent = "";
+  ui.apiTestResult.className = "api-test-result";
+}
+
+function nextApiProfileName() {
+  const names = new Set((state.apiProfileStore?.profiles || []).map((profile) => profile.name.toLocaleLowerCase()));
+  let index = 1;
+  while (names.has(`api ${index}`)) index += 1;
+  return `API ${index}`;
+}
+
+function addApiProfile() {
+  if (!state.apiProfileStore) return;
+  syncActiveApiProfileFromForm();
+  const profile = {
+    id: `api-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+    name: nextApiProfileName(),
+    endpoint: "https://api.openai.com/v1/chat/completions",
+    model: "",
+    apiKey: "",
+  };
+  state.apiProfileStore.profiles.push(profile);
+  state.apiProfileStore.activeProfileId = profile.id;
+  renderApiProfileSelector();
+  ui.apiEndpoint.focus();
+}
+
+function renameApiProfile() {
+  if (!state.apiProfileStore) return;
+  syncActiveApiProfileFromForm();
+  const profile = currentApiProfileDraft();
+  const name = window.prompt(t("输入新的 API 配置名称", "Enter a new API profile name"), profile.name)?.trim();
+  if (!name || name === profile.name) return;
+  if (state.apiProfileStore.profiles.some((item) => item.id !== profile.id && item.name.toLocaleLowerCase() === name.toLocaleLowerCase())) {
+    toast(t("API 配置名称不能重复", "API profile names must be unique"), true);
+    return;
+  }
+  profile.name = name;
+  renderApiProfileSelector({ fillForm: false });
+}
+
+function deleteApiProfile() {
+  const store = state.apiProfileStore;
+  if (!store) return;
+  if (store.profiles.length <= 1) {
+    toast(t("至少需要保留一个 API 配置", "At least one API profile is required"), true);
+    return;
+  }
+  syncActiveApiProfileFromForm();
+  const index = store.profiles.findIndex((profile) => profile.id === store.activeProfileId);
+  const profile = currentApiProfileDraft();
+  if (!window.confirm(t(`删除 API 配置“${profile.name}”？`, `Delete API profile “${profile.name}”?`))) return;
+  store.profiles.splice(Math.max(0, index), 1);
+  store.activeProfileId = store.profiles[Math.min(Math.max(0, index), store.profiles.length - 1)].id;
+  renderApiProfileSelector();
+}
+
+function localizeApiSettingsError(error) {
+  const name = error?.profileName || currentApiProfileDraft()?.name || "";
+  const messages = {
+    API_PROFILE_REQUIRED: t("至少需要保留一个 API 配置。", "At least one API profile is required."),
+    API_PROFILE_NAME_REQUIRED: t("API 配置名称不能为空。", "The API profile name cannot be empty."),
+    API_PROFILE_NAME_DUPLICATE: t(`API 配置名称不能重复：${name}`, `API profile names must be unique: ${name}`),
+    API_PROFILE_INCOMPLETE: t(
+      name ? `请完整填写“${name}”的地址、模型和 API Key。` : "请完整填写地址、模型和 API Key。",
+      name ? `Complete the endpoint, model, and API Key for “${name}”.` : "Complete the endpoint, model, and API Key.",
+    ),
+    API_ENDPOINT_INVALID: t("API 地址无效。", "The API endpoint is invalid."),
+    API_ENDPOINT_PROTOCOL: t("API 地址必须以 http:// 或 https:// 开头。", "The API endpoint must start with http:// or https://."),
+    API_PERMISSION_REQUIRED: t("需要允许访问 API 域名才能发送请求。", "Allow access to the API domain before sending requests."),
+    API_SETTINGS_REQUIRED: t("请先设置 API 地址、模型和 API Key。", "Configure an API endpoint, model, and API Key first."),
+  };
+  if (!messages[error?.code]) return error;
+  return Object.assign(new Error(messages[error.code]), { code: error.code });
+}
+
 async function openSettings() {
-  const settings = await loadApiSettings();
-  ui.apiEndpoint.value = settings.endpoint || "";
-  ui.apiModel.value = settings.model || "";
-  ui.apiKey.value = settings.apiKey || "";
+  state.apiProfileStore = await loadApiProfileStore();
+  renderApiProfileSelector();
   ui.focusHeight.value = String(state.readerSettings.focusHeight);
   ui.focusHeightValue.value = `${state.readerSettings.focusHeight}%`;
   ui.showFocusGuide.checked = state.readerSettings.showFocusGuide;
@@ -1774,11 +1936,14 @@ async function openSettings() {
 async function testApiConnection() {
   const button = $("#testApi");
   button.disabled = true;
-  ui.apiTestResult.textContent = "正在测试接口、权限和模型响应…";
+  ui.apiTestResult.textContent = t("正在测试接口、权限和模型响应…", "Testing the endpoint, permission, and model response…");
   ui.apiTestResult.className = "api-test-result";
   try {
-    const saved = await saveApiSettings({ endpoint: ui.apiEndpoint.value.trim(), model: ui.apiModel.value.trim(), apiKey: ui.apiKey.value.trim() });
-    ui.apiEndpoint.value = saved.endpoint;
+    syncActiveApiProfileFromForm();
+    const profile = currentApiProfileDraft();
+    const testedProfile = await authorizeApiProfile(profile);
+    Object.assign(profile, testedProfile);
+    fillApiProfileForm();
     const testImage = createApiTestImage();
     const response = await requestVision([
       { role: "system", content: "只返回严格JSON，不使用Markdown。" },
@@ -1786,16 +1951,17 @@ async function testApiConnection() {
         { type: "text", text: "这是一次视觉模型连接测试。读取附带的小图片，然后返回 {\"ok\":true,\"message\":\"连接成功\"}" },
         { type: "image_url", image_url: { url: testImage } },
       ] },
-    ]);
+    ], testedProfile);
     const text = extractAssistantText(response);
     parseJsonResponse(text);
-    ui.apiTestResult.textContent = "连接成功：接口可访问，模型能返回可解析文本。";
+    ui.apiTestResult.textContent = t("连接成功：接口可访问，模型能返回可解析文本。", "Connection successful: the endpoint is reachable and the model returned parseable text.");
     ui.apiTestResult.className = "api-test-result success";
     clearError();
   } catch (error) {
-    ui.apiTestResult.textContent = error.message;
+    const localizedError = localizeApiSettingsError(error);
+    ui.apiTestResult.textContent = localizedError.message;
     ui.apiTestResult.className = "api-test-result error";
-    showError("API 连接测试失败", error);
+    showError(t("API 连接测试失败", "API connection test failed"), localizedError);
   } finally { button.disabled = false; }
 }
 
@@ -1814,13 +1980,14 @@ function createApiTestImage() {
 async function saveSettingsFromDialog(event) {
   event.preventDefault();
   try {
-    await saveApiSettings({ endpoint: ui.apiEndpoint.value.trim(), model: ui.apiModel.value.trim(), apiKey: ui.apiKey.value.trim() });
+    syncActiveApiProfileFromForm();
+    state.apiProfileStore = await saveApiProfileStore(state.apiProfileStore);
     await saveReaderSettings();
     ui.settingsDialog.close();
     toast("设置已保存在本地");
     clearError();
     if (state.pdf) scheduleAnalysis(100);
-  } catch (error) { toast(error.message, true); }
+  } catch (error) { toast(localizeApiSettingsError(error).message, true); }
 }
 
 async function exportMemory() {

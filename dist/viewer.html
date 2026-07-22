@@ -56,6 +56,17 @@
           <div><small data-i18n="connectModel">连接模型</small><h2 data-i18n="apiSettings">API 设置</h2></div>
           <button type="button" id="closeSettings" class="icon-button">×</button>
         </div>
+        <div class="api-profile-bar">
+          <label class="api-profile-picker">
+            <span data-i18n="activeApiProfile">当前启用的 API</span>
+            <select id="apiProfileSelect" aria-label="当前 API 配置"></select>
+          </label>
+          <button type="button" id="addApiProfile" class="api-profile-button add" title="新增 API 配置" aria-label="新增 API 配置">+</button>
+          <button type="button" id="renameApiProfile" class="api-profile-button" title="重命名 API 配置" aria-label="重命名 API 配置">✎</button>
+          <button type="button" id="deleteApiProfile" class="api-profile-button delete" title="删除 API 配置" aria-label="删除 API 配置">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3m-9 0 1 13h10l1-13M10 11v5m4-5v5" /></svg>
+          </button>
+        </div>
         <label><span data-i18n="endpoint">OpenAI 兼容接口地址</span><input id="apiEndpoint" type="url" required placeholder="https://api.openai.com/v1 或完整 chat/completions 地址" /></label>
         <label><span data-i18n="modelName">模型名称</span><input id="apiModel" required placeholder="支持视觉输入的模型" /></label>
         <label>API Key<input id="apiKey" type="password" required autocomplete="off" placeholder="sk-..." /></label>

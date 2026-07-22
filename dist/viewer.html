@@ -16,7 +16,10 @@
       </div>
       <span id="documentTitle" class="document-title" data-i18n="noPaper">尚未打开文档</span>
       <div class="toolbar-actions">
-        <span id="analysisState" class="status" data-i18n="waitingPdf">等待 PDF</span>
+        <div id="statusShell" class="status-shell" data-status-key="initial">
+          <span id="analysisState" class="status" data-i18n="waitingPdf">等待 PDF</span>
+          <button id="dismissStatus" class="status-dismiss" type="button" title="关闭当前状态" aria-label="关闭当前状态">×</button>
+        </div>
         <button id="toggleAnalysis" class="icon-button" title="暂停或继续智能标注" disabled>◉</button>
         <button id="resendViewport" class="icon-button" title="清除当前视野的发送记录并重新识别" disabled>↻</button>
         <button id="importMemory" class="icon-button" title="导入当前 PDF memory" disabled>⇧</button>

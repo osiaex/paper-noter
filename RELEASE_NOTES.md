@@ -1,8 +1,8 @@
-# Paper Noter v0.7
+# Paper Noter v0.7.2
 
 ## 中文
 
-Paper Noter v0.7 聚焦于可靠的本地记忆迁移、更安全的 PDF 读取，以及更准确、更克制的阅读标注体验。
+Paper Noter v0.7.2 聚焦于可靠的本地记忆迁移、更安全的 PDF 读取，以及更准确、更克制的阅读标注体验。
 
 主要更新：
 
@@ -19,7 +19,7 @@ Full 安装包包含完整 CMap、标准字体回退、WASM 与 ICC 资源。
 
 ## English
 
-Paper Noter v0.7 focuses on portable local memory, safer PDF loading, and more accurate, restrained reading annotations.
+Paper Noter v0.7.2 focuses on portable local memory, safer PDF loading, and more accurate, restrained reading annotations.
 
 Highlights:
 

@@ -4,9 +4,10 @@ import { PaperMemory, sha256 } from "./memory.js";
 import { pdfFileName } from "./pdf-routing.js";
 import { intervalLength, synchronizedAnimationDelay } from "./coverage.js";
 import { buildQuickLink, normalizeQuickLinkSettings, validateQuickLinkSettings } from "./quick-links.js";
-import { tokenizeMath } from "./math.js";
+import { expandRangeToMathTokens, tokenizeMath } from "./math.js";
 import { findExactTermRange, isAnnotationAnchorConsistent } from "./annotation-anchor.js";
 import { computePdfIdentity } from "./pdf-identity.js";
+import { resolvePdfTitle } from "./pdf-title.js";
 import { render as renderMath } from "./vendor/katex/katex.mjs";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = chrome.runtime.getURL("vendor/pdf.worker.mjs");
@@ -14,7 +15,7 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = chrome.runtime.getURL("vendor/pdf.worke
 const $ = (selector) => document.querySelector(selector);
 const READER_SETTINGS_KEY = "paperMemoryReaderSettings";
 const VIEWPORT_SETTLE_MS = 500;
-const SENT_COVERAGE_FULL_CYCLE_MS = 2500;
+const SENT_COVERAGE_FULL_CYCLE_MS = 1250;
 const IMAGE_PRECISION = {
   low: { maxSide: 768, quality: .58 },
   balanced: { maxSide: 1152, quality: .72 },
@@ -72,7 +73,7 @@ const ui = {
   toolbar: document.querySelector(".toolbar"),
   workspace: $("#workspace"), viewer: $("#viewer"), pages: $("#pages"), fileInput: $("#fileInput"),
   openFile: $("#openFile"), emptyOpenFile: $("#emptyOpenFile"), documentTitle: $("#documentTitle"),
-  analysisState: $("#analysisState"), toggleAnalysis: $("#toggleAnalysis"), resendViewport: $("#resendViewport"), importMemory: $("#importMemory"), memoryInput: $("#memoryInput"), exportMemory: $("#exportMemory"),
+  statusShell: $("#statusShell"), analysisState: $("#analysisState"), dismissStatus: $("#dismissStatus"), toggleAnalysis: $("#toggleAnalysis"), resendViewport: $("#resendViewport"), importMemory: $("#importMemory"), memoryInput: $("#memoryInput"), exportMemory: $("#exportMemory"),
   understandImage: $("#understandImage"), bubbleLayer: $("#bubbleLayer"),
   settingsButton: $("#settingsButton"), settingsDialog: $("#settingsDialog"), settingsForm: $("#settingsForm"),
   apiEndpoint: $("#apiEndpoint"), apiModel: $("#apiModel"), apiKey: $("#apiKey"), toast: $("#toast"),
@@ -91,7 +92,7 @@ const state = {
   analysisEnabled: true, analysisTimer: 0,
   regionSignatures: new Set(), inFlightSignatures: new Set(), resetCoverageDocuments: new Set(), coverageEpochs: new Map(), bubbleStack: [], activeImageTasks: 0,
   readerSettings: { language: "zh", focusHeight: 60, showFocusGuide: true, viewportPayloadMode: "image", imagePrecision: "balanced", quickLinkProvider: "wiki", quickLinkCustomLabel: "自定义", quickLinkCustomTemplate: "" }, textSelection: null,
-  analysisTasks: new Map(), questionTasks: new Map(), nextAnalysisTaskId: 0, progressTimer: 0, errorAction: null,
+  analysisTasks: new Map(), questionTasks: new Map(), nextAnalysisTaskId: 0, progressTimer: 0, errorAction: null, dismissedStatusKey: "",
 };
 
 ui.openFile.addEventListener("click", () => ui.fileInput.click());
@@ -110,6 +111,7 @@ $("#errorSettings").addEventListener("click", () => {
 });
 $("#dismissError").addEventListener("click", clearError);
 ui.toggleAnalysis.addEventListener("click", toggleAnalysis);
+ui.dismissStatus.addEventListener("click", dismissCurrentStatus);
 ui.resendViewport.addEventListener("click", resendCurrentViewport);
 ui.importMemory.addEventListener("click", () => ui.memoryInput.click());
 ui.memoryInput.addEventListener("change", () => importMemory(ui.memoryInput.files?.[0]));
@@ -165,6 +167,8 @@ function applyInterfaceLanguage() {
   ui.importMemory.title = t("导入当前 PDF memory", "Import memory for the current PDF");
   ui.exportMemory.title = t("导出当前 PDF memory", "Export the current PDF memory");
   ui.settingsButton.title = t("API 设置", "API settings");
+  ui.dismissStatus.title = t("关闭当前状态", "Dismiss current status");
+  ui.dismissStatus.setAttribute("aria-label", ui.dismissStatus.title);
   ui.understandImage.title = t("立即截取并理解当前视野", "Capture and understand the current viewport");
   ui.selectionQuestion.title = t("noting 选中文本", "Run noting on selected text");
   ui.quickLinkProvider.querySelector('option[value="custom"]').textContent = t("自定义", "Custom");
@@ -285,6 +289,12 @@ async function openPdf(file) {
       wasmUrl: chrome.runtime.getURL("vendor/wasm/"),
       iccUrl: chrome.runtime.getURL("vendor/iccs/"),
     }).promise;
+    let pdfTitle = resolvePdfTitle(null, file.name);
+    try {
+      pdfTitle = resolvePdfTitle(await state.pdf.getMetadata(), file.name);
+    } catch {
+      // A malformed metadata dictionary must not prevent the PDF from opening.
+    }
     let knownDocumentId = await PaperMemory.findDocumentByBinary(binarySha256);
     let identity = { contentFingerprint: "", layoutFingerprint: "", sampledCharacters: 0 };
     if (!knownDocumentId) {
@@ -316,7 +326,8 @@ async function openPdf(file) {
     }
     await createPagePlaceholders();
     ui.workspace.classList.remove("empty");
-    ui.documentTitle.textContent = file.name;
+    ui.documentTitle.textContent = pdfTitle;
+    document.title = pdfTitle;
     ui.toggleAnalysis.disabled = false;
     ui.resendViewport.disabled = false;
     ui.importMemory.disabled = false;
@@ -1331,15 +1342,21 @@ function renderBubbleAnnotatedText(container, text, bubble, bubbleIndex, field, 
     && annotation.anchor.end > annotation.anchor.start
     && annotation.anchor.start < value.length
   ));
-  const boundaries = [...new Set([0, value.length, ...annotations.flatMap((annotation) => [
-    clamp(annotation.anchor.start, 0, value.length),
-    clamp(annotation.anchor.end, 0, value.length),
+  const renderAnnotations = annotations.map((annotation) => ({
+    annotation,
+    ...expandRangeToMathTokens(value, annotation.anchor.start, annotation.anchor.end),
+  }));
+  const boundaries = [...new Set([0, value.length, ...renderAnnotations.flatMap((item) => [
+    item.start,
+    item.end,
   ])])].sort((a, b) => a - b);
   for (let index = 0; index < boundaries.length - 1; index += 1) {
     const start = boundaries[index], end = boundaries[index + 1];
     if (end <= start) continue;
     const segment = value.slice(start, end);
-    const active = annotations.filter((annotation) => annotation.anchor.start < end && annotation.anchor.end > start);
+    const active = renderAnnotations
+      .filter((item) => item.start < end && item.end > start)
+      .map((item) => item.annotation);
     if (!active.length) {
       appendRichBubbleText(container, segment, start, includeSecondaryTerms ? visibleSecondaryTerms(bubble) : [], (term, button) => openChildBubble(bubbleIndex, term, button));
       continue;
@@ -2009,7 +2026,7 @@ function renderActiveAnalysisStatus() {
   const latest = tasks[0];
   const elapsed = ((performance.now() - latest.startedAt) / 1000).toFixed(1);
   const parallel = tasks.length > 1 ? ` · ${tasks.length} ${t("个并行任务", "parallel tasks")}` : "";
-  setStatus(`${latest.title} · ${elapsed}s${parallel}`, "working");
+  setStatus(`${latest.title} · ${elapsed}s${parallel}`, "working", `analysis-task:${latest.id}`);
   ui.analysisState.title = `${latest.detail}${tasks.length > 1 ? `\n${t(`另有 ${tasks.length - 1} 个较早任务仍在处理中`, `${tasks.length - 1} earlier task(s) still running`)}` : ""}`;
 }
 
@@ -2087,7 +2104,19 @@ function boxesIntersect(a, b) { return Math.min(a[2], b[2]) > Math.max(a[0], b[0
 function expandBox([x1, y1, x2, y2], amount) { return [clamp(x1 - amount, 0, 1), clamp(y1 - amount, 0, 1), clamp(x2 + amount, 0, 1), clamp(y2 + amount, 0, 1)]; }
 function clamp(value, min, max) { return Math.min(max, Math.max(min, value)); }
 function simpleHash(value) { let hash = 2166136261; for (let index = 0; index < value.length; index += 1) { hash ^= value.charCodeAt(index); hash = Math.imul(hash, 16777619); } return (hash >>> 0).toString(36); }
-function setStatus(text, className = "") { ui.analysisState.textContent = localizeRuntimeText(text); ui.analysisState.className = `status ${className}`.trim(); ui.analysisState.title = ""; }
+function dismissCurrentStatus() {
+  state.dismissedStatusKey = ui.statusShell.dataset.statusKey || "initial";
+  ui.statusShell.classList.add("dismissed");
+}
+function setStatus(text, className = "", statusKey = "") {
+  const localizedText = localizeRuntimeText(text);
+  const key = statusKey || `message:${className}:${localizedText}`;
+  ui.analysisState.textContent = localizedText;
+  ui.analysisState.className = `status ${className}`.trim();
+  ui.analysisState.title = "";
+  ui.statusShell.dataset.statusKey = key;
+  ui.statusShell.classList.toggle("dismissed", state.dismissedStatusKey === key);
+}
 let toastTimer;
 function toast(message, error = false) { clearTimeout(toastTimer); ui.toast.textContent = localizeRuntimeText(message); ui.toast.className = `toast show${error ? " error" : ""}`; toastTimer = setTimeout(() => { ui.toast.className = "toast"; }, 4200); }
 function showError(title, error, action = null) {

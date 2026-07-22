@@ -29,6 +29,18 @@ export function tokenizeMath(value) {
   return tokens.length ? tokens : [{ type: "text", value: text, start: 0, end: text.length }];
 }
 
+export function expandRangeToMathTokens(value, start, end) {
+  const text = String(value || "");
+  let safeStart = Math.max(0, Math.min(text.length, Number.isFinite(start) ? start : 0));
+  let safeEnd = Math.max(safeStart, Math.min(text.length, Number.isFinite(end) ? end : text.length));
+  for (const token of tokenizeMath(text)) {
+    if (token.type !== "math") continue;
+    if (safeStart > token.start && safeStart < token.end) safeStart = token.start;
+    if (safeEnd > token.start && safeEnd < token.end) safeEnd = token.end;
+  }
+  return { start: safeStart, end: safeEnd };
+}
+
 function mathOpeningAt(text, index) {
   if (isEscaped(text, index)) return null;
   if (text.startsWith("$$", index)) return { open: "$$", close: "$$", displayMode: true };

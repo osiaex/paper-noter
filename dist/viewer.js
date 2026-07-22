@@ -94,7 +94,7 @@ const ui = {
 
 const state = {
   pdf: null, fileName: "", documentId: "", memory: null, pages: new Map(),
-  analysisEnabled: true, analysisTimer: 0,
+  analysisEnabled: true, analysisTimer: 0, pdfLoading: false,
   regionSignatures: new Set(), inFlightSignatures: new Set(), resetCoverageDocuments: new Set(), coverageEpochs: new Map(), bubbleStack: [], activeImageTasks: 0,
   readerSettings: { language: "zh", focusHeight: 60, showFocusGuide: true, viewportPayloadMode: "image", imagePrecision: "balanced", quickLinkProvider: "wiki", quickLinkCustomLabel: "自定义", quickLinkCustomTemplate: "" }, textSelection: null,
   analysisTasks: new Map(), questionTasks: new Map(), nextAnalysisTaskId: 0, progressTimer: 0, errorAction: null, dismissedStatusKey: "", apiProfileStore: null,
@@ -214,6 +214,7 @@ async function initializeViewer() {
 }
 
 async function openPdfFromUrl(source, cacheToken = "") {
+  beginPdfLoading();
   try {
     setStatus("正在直接加载 PDF…", "working");
     if (source.startsWith("file:")) {
@@ -227,6 +228,7 @@ async function openPdfFromUrl(source, cacheToken = "") {
     const file = new File([buffer], name, { type: contentType || "application/pdf" });
     await openPdf(file);
   } catch (error) {
+    endPdfLoading(false);
     console.warn("Handled direct PDF loading failure", error);
     if (source.startsWith("file:")) {
       const localError = new Error(t(
@@ -298,6 +300,7 @@ function loadLocalPdfWithXhr(source) {
 }
 
 async function openPdf(file) {
+  beginPdfLoading();
   try {
     setStatus("正在打开…", "working");
     closeBubbles();
@@ -355,16 +358,17 @@ async function openPdf(file) {
     ui.workspace.classList.remove("empty");
     ui.documentTitle.textContent = pdfTitle;
     document.title = pdfTitle;
-    ui.toggleAnalysis.disabled = false;
+    endPdfLoading(true);
     ui.resendViewport.disabled = false;
     ui.importMemory.disabled = false;
     ui.exportMemory.disabled = false;
     ui.understandImage.disabled = false;
-    setStatus("本地 memory 已加载", "ready");
+    setStatus(state.analysisEnabled ? "本地 memory 已加载" : "智能标注已暂停", state.analysisEnabled ? "ready" : "");
     clearError();
     updateFocusGuide();
     scheduleAnalysis(900);
   } catch (error) {
+    endPdfLoading(false);
     console.error(error);
     showError("PDF 打开失败", error);
     setStatus("打开失败");
@@ -459,12 +463,25 @@ function handleViewerScroll() {
 function scheduleAnalysis(delay = VIEWPORT_SETTLE_MS) {
   clearTimeout(state.analysisTimer);
   closeBubbles();
-  if (!state.analysisEnabled || !state.pdf) return;
+  if (!state.analysisEnabled || !state.pdf || state.pdfLoading) return;
   state.analysisTimer = setTimeout(() => analyzeCurrentRegion(), delay);
+}
+
+function beginPdfLoading() {
+  state.pdfLoading = true;
+  clearTimeout(state.analysisTimer);
+  ui.toggleAnalysis.disabled = false;
+  ui.toggleAnalysis.textContent = state.analysisEnabled ? "◉" : "○";
+}
+
+function endPdfLoading(opened) {
+  state.pdfLoading = false;
+  ui.toggleAnalysis.disabled = !opened && !state.pdf;
 }
 
 function toggleAnalysis() {
   state.analysisEnabled = !state.analysisEnabled;
+  if (!state.analysisEnabled) clearTimeout(state.analysisTimer);
   ui.toggleAnalysis.textContent = state.analysisEnabled ? "◉" : "○";
   setStatus(state.analysisEnabled ? "智能标注已开启" : "智能标注已暂停", state.analysisEnabled ? "ready" : "");
   if (state.analysisEnabled) scheduleAnalysis(200);

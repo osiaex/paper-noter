@@ -50,7 +50,7 @@ button { color: inherit; }
 
 .workspace { position: relative; height: calc(100dvh - var(--toolbar-height)); }
 .viewer { position: absolute; inset: 0; overflow: auto; scroll-behavior: smooth; }
-.pages { width: max-content; min-width: 100%; padding: 34px 96px 120px; }
+.pages { width: max-content; min-width: 100%; padding: 34px 116px 120px; }
 .pdf-page { --user-unit: 1; --total-scale-factor: calc(var(--scale-factor) * var(--user-unit)); position: relative; margin: 0 auto 24px; background: white; box-shadow: 0 8px 30px rgba(34,45,42,.13); }
 .pdf-page canvas { display: block; }
 .sent-coverage-layer { position: absolute; z-index: 1; inset: 0; overflow: hidden; pointer-events: none; }
@@ -88,8 +88,9 @@ button { color: inherit; }
 .empty-icon { display: grid; place-items: center; width: 70px; height: 82px; border: 2px solid var(--ink); border-radius: 4px 15px 4px 4px; font-family: Georgia, serif; font-weight: 700; }
 
 .figure-rail { position: absolute; z-index: 12; left: 18px; top: 22px; }
-.figure-button { display: flex; width: 56px; min-height: 70px; padding: 8px 5px; flex-direction: column; align-items: center; gap: 4px; color: var(--accent); border: 1px solid #b9cbc5; border-radius: 13px; background: rgba(255,255,252,.94); box-shadow: 0 6px 22px rgba(23,32,31,.08); cursor: pointer; }
-.figure-button span { font-size: 23px; }.figure-button small { line-height: 1.2; }
+.figure-button { display: flex; width: 82px; min-height: 70px; padding: 8px 7px; flex-direction: column; align-items: center; gap: 4px; color: var(--accent); border: 1px solid #b9cbc5; border-radius: 13px; background: rgba(255,255,252,.94); box-shadow: 0 6px 22px rgba(23,32,31,.08); cursor: pointer; }
+.figure-button span { font-size: 23px; }
+.figure-button small { display: block; width: 100%; line-height: 1.2; text-align: center; overflow-wrap: anywhere; }
 .figure-button.active { color: white; background: var(--accent); }
 .figure-button:disabled { display: none; }
 
@@ -229,11 +230,11 @@ button { color: inherit; }
 }
 
 @media (max-width: 640px) {
-  .pages { padding: 24px 10px 90px 56px; }
+  .pages { padding: 24px 10px 90px 76px; }
   .figure-rail { left: 6px; top: 14px; }
-  .figure-button { width: 42px; min-height: 58px; padding: 6px 3px; border-radius: 11px; }
+  .figure-button { width: 62px; min-height: 58px; padding: 6px 4px; border-radius: 11px; }
   .figure-button span { font-size: 20px; }
-  .figure-button small { font-size: 10px; }
+  .figure-button small { font-size: 9px; }
   .empty-state { padding: 24px 18px; }
   .empty-state h1 { font-size: clamp(25px, 8vw, 36px); }
   .settings-dialog { width: calc(100vw - 16px); max-height: calc(100dvh - 16px); border-radius: 14px; }

@@ -31,7 +31,7 @@ const UI_TEXT = {
     privacy: "Key 仅保存在浏览器本地。图片和当前视野文本只会在触发分析时发往你填写的接口。",
     interfaceLanguage: "界面语言", language: "语言", focusRange: "视野范围", faster: "更快 · 20%", moreContext: "更多上下文 · 100%", showFocus: "显示视野边框，并稍微调暗视野外内容",
     payloadHeading: "自动分析发送内容", textOnly: "仅发送文本", textOnlyHint: "速度更快，不上传视野截图", textImage: "文本 + 视野截图", textImageHint: "适合公式、版式与图文混排内容", imagePrecision: "截图精度", precisionLow: "低 · 最长边 768px", precisionBalanced: "标准 · 最长边 1152px", precisionHigh: "高 · 最长边 1600px", payloadHint: "仅影响自动视野分析；气泡问号和“理解图片”仍会按需发送图片。",
-    quickLinks: "名词气泡快速链接", searchService: "搜索服务", quickLinkLabel: "灰色标题名称", quickLinkTemplate: "搜索 URL 模板", quickLinkHint: "`{query}` 会替换为当前气泡自身的名词。部分 AI 网站可能只打开官方对话页，是否自动预填取决于该网站当前支持情况。",
+    quickLinks: "名词气泡快速链接", searchService: "搜索服务", quickLinkLabel: "灰色标题名称", quickLinkTemplate: "搜索 URL 模板",
     testConnection: "测试连接", cancel: "取消", save: "保存", analysisFailed: "分析失败", checkApi: "检查 API 设置",
   },
   en: {
@@ -43,7 +43,7 @@ const UI_TEXT = {
     privacy: "Your key is stored only in this browser. Images and viewport text are sent only when analysis is triggered.",
     interfaceLanguage: "Interface language", language: "Language", focusRange: "Viewport range", faster: "Faster · 20%", moreContext: "More context · 100%", showFocus: "Show the viewport border and dim content outside it",
     payloadHeading: "Automatic analysis payload", textOnly: "Text only", textOnlyHint: "Faster; does not upload a viewport image", textImage: "Text + viewport image", textImageHint: "Best for formulas, layout, and mixed visual content", imagePrecision: "Image precision", precisionLow: "Low · longest side 768px", precisionBalanced: "Balanced · longest side 1152px", precisionHigh: "High · longest side 1600px", payloadHint: "Only affects automatic analysis; bubble follow-ups and image understanding still send images when needed.",
-    quickLinks: "Term bubble quick link", searchService: "Search service", quickLinkLabel: "Gray title label", quickLinkTemplate: "Search URL template", quickLinkHint: "`{query}` is replaced with the current bubble term. Some AI sites may only open their official chat page if URL-prefill is unsupported.",
+    quickLinks: "Term bubble quick link", searchService: "Search service", quickLinkLabel: "Gray title label", quickLinkTemplate: "Search URL template",
     testConnection: "Test connection", cancel: "Cancel", save: "Save", analysisFailed: "Analysis failed", checkApi: "Check API settings",
   },
 };

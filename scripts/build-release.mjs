@@ -18,6 +18,9 @@ for (const variant of variants) {
 
   const manifestPath = join(target, "manifest.json");
   const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+  // Keep the fixed development ID in source/dist, but omit it from packages
+  // uploaded to the Chrome Web Store, which rejects manifests with `key`.
+  delete manifest.key;
   manifest.version_name = `${displayVersion} Full`;
   await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
 

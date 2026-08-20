@@ -8,7 +8,7 @@ I designed this project based on my own needs. It is a lightweight browser plugi
 
 The project is open source, and we welcome improvements together :)
 
-[中文](#中文) · [English](#english) · [v0.7.5 Release](https://github.com/osiaex/paper-noter/releases/tag/v0.7.5)
+[中文](#中文) · [English](#english) · [v0.7.6 Release](https://github.com/osiaex/paper-noter/releases/tag/v0.7.6)
 
 ## Poster / 产品展示
 
@@ -41,11 +41,12 @@ Paper Noter 是一个 Chrome / Edge Manifest V3 学术 PDF 阅读扩展。它只
 - 鼠标选中文本后可立即运行 noting，包括 PDF 正文与气泡文本。
 - “理解图片”会立即截取当前视野并作为独立并行任务处理。
 - 每篇 PDF 的标注、解释、追问和图片理解结果均保存在浏览器本地。
+- 可一键显示或隐藏当前 PDF 的全部注释，并可直接复制论文标题。
 - 中文 / English 界面、可调视野高度、截图精度与可选视野边框。
 
 ### 下载
 
-前往 [GitHub Releases](https://github.com/osiaex/paper-noter/releases) 下载 `paper-noter-v0.7.5-full.zip`。发布包包含完整 CMap、标准字体回退、WASM 与 ICC 资源，以保证中日韩论文、特殊字体和复杂 PDF 的兼容性。
+前往 [GitHub Releases](https://github.com/osiaex/paper-noter/releases) 下载 `paper-noter-v0.7.6-full.zip`。发布包包含完整 CMap、标准字体回退、WASM 与 ICC 资源，以保证中日韩论文、特殊字体和复杂 PDF 的兼容性。
 
 ### 安装
 
@@ -112,11 +113,12 @@ Paper Noter is a Chrome / Edge Manifest V3 extension for reading academic PDFs. 
 - Runs noting on selected text in both the PDF and explanation bubbles.
 - Captures the current viewport immediately for parallel image-understanding tasks.
 - Stores annotations, explanations, follow-ups, and image results locally per PDF.
+- Shows or hides all annotations in one click and copies the paper title directly from the toolbar.
 - Includes Chinese / English UI, adjustable viewport height, image precision, and an optional focus border.
 
 ### Download
 
-Download `paper-noter-v0.7.5-full.zip` from [GitHub Releases](https://github.com/osiaex/paper-noter/releases). The package includes complete CMaps, standard-font fallbacks, WASM, and ICC resources for reliable rendering of CJK papers, unusual fonts, and complex PDFs.
+Download `paper-noter-v0.7.6-full.zip` from [GitHub Releases](https://github.com/osiaex/paper-noter/releases). The package includes complete CMaps, standard-font fallbacks, WASM, and ICC resources for reliable rendering of CJK papers, unusual fonts, and complex PDFs.
 
 ### Install
 

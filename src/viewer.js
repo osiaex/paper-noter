@@ -76,8 +76,8 @@ const RUNTIME_EN = new Map([
 const ui = {
   toolbar: document.querySelector(".toolbar"),
   workspace: $("#workspace"), viewer: $("#viewer"), pages: $("#pages"), fileInput: $("#fileInput"),
-  openFile: $("#openFile"), emptyOpenFile: $("#emptyOpenFile"), documentTitle: $("#documentTitle"),
-  statusShell: $("#statusShell"), analysisState: $("#analysisState"), dismissStatus: $("#dismissStatus"), toggleAnalysis: $("#toggleAnalysis"), resendViewport: $("#resendViewport"), importMemory: $("#importMemory"), memoryInput: $("#memoryInput"), exportMemory: $("#exportMemory"),
+  openFile: $("#openFile"), emptyOpenFile: $("#emptyOpenFile"), documentTitle: $("#documentTitle"), copyTitle: $("#copyTitle"),
+  statusShell: $("#statusShell"), analysisState: $("#analysisState"), dismissStatus: $("#dismissStatus"), toggleAnnotations: $("#toggleAnnotations"), toggleAnalysis: $("#toggleAnalysis"), resendViewport: $("#resendViewport"), importMemory: $("#importMemory"), memoryInput: $("#memoryInput"), exportMemory: $("#exportMemory"),
   understandImage: $("#understandImage"), bubbleLayer: $("#bubbleLayer"),
   settingsButton: $("#settingsButton"), settingsDialog: $("#settingsDialog"), settingsForm: $("#settingsForm"),
   apiProfileSelect: $("#apiProfileSelect"), addApiProfile: $("#addApiProfile"), renameApiProfile: $("#renameApiProfile"), deleteApiProfile: $("#deleteApiProfile"),
@@ -93,8 +93,8 @@ const ui = {
 };
 
 const state = {
-  pdf: null, fileName: "", documentId: "", memory: null, pages: new Map(),
-  analysisEnabled: true, analysisTimer: 0, pdfLoading: false,
+  pdf: null, fileName: "", pdfTitle: "", documentId: "", memory: null, pages: new Map(),
+  analysisEnabled: true, annotationsVisible: true, analysisTimer: 0, pdfLoading: false,
   regionSignatures: new Set(), inFlightSignatures: new Set(), resetCoverageDocuments: new Set(), coverageEpochs: new Map(), bubbleStack: [], activeImageTasks: 0,
   readerSettings: { language: "zh", focusHeight: 60, showFocusGuide: true, viewportPayloadMode: "image", imagePrecision: "balanced", quickLinkProvider: "wiki", quickLinkCustomLabel: "自定义", quickLinkCustomTemplate: "" }, textSelection: null,
   analysisTasks: new Map(), questionTasks: new Map(), nextAnalysisTaskId: 0, progressTimer: 0, errorAction: null, dismissedStatusKey: "", apiProfileStore: null,
@@ -104,6 +104,7 @@ ui.openFile.addEventListener("click", () => ui.fileInput.click());
 ui.emptyOpenFile.addEventListener("click", () => ui.fileInput.click());
 ui.fileInput.addEventListener("change", () => ui.fileInput.files?.[0] && openPdf(ui.fileInput.files[0]));
 ui.settingsButton.addEventListener("click", openSettings);
+ui.copyTitle.addEventListener("click", copyDocumentTitle);
 ui.apiProfileSelect.addEventListener("change", switchApiProfile);
 ui.addApiProfile.addEventListener("click", addApiProfile);
 ui.renameApiProfile.addEventListener("click", renameApiProfile);
@@ -120,6 +121,7 @@ $("#errorSettings").addEventListener("click", () => {
 });
 $("#dismissError").addEventListener("click", clearError);
 ui.toggleAnalysis.addEventListener("click", toggleAnalysis);
+ui.toggleAnnotations.addEventListener("click", toggleAnnotations);
 ui.dismissStatus.addEventListener("click", dismissCurrentStatus);
 ui.resendViewport.addEventListener("click", resendCurrentViewport);
 ui.importMemory.addEventListener("click", () => ui.memoryInput.click());
@@ -172,6 +174,9 @@ function applyInterfaceLanguage() {
     if (value) element.textContent = value;
   });
   ui.toggleAnalysis.title = t("暂停或继续智能标注", "Pause or resume smart annotation");
+  ui.copyTitle.title = t("复制标题", "Copy title");
+  ui.copyTitle.setAttribute("aria-label", ui.copyTitle.title);
+  updateAnnotationVisibilityControl();
   ui.resendViewport.title = t("清除当前视野的发送记录并重新识别", "Clear and resend the current viewport");
   ui.importMemory.title = t("导入当前 PDF memory", "Import memory for the current PDF");
   ui.exportMemory.title = t("导出当前 PDF memory", "Export the current PDF memory");
@@ -306,6 +311,11 @@ async function openPdf(file) {
     closeBubbles();
     state.pages.clear();
     state.regionSignatures.clear();
+    state.pdfTitle = "";
+    state.annotationsVisible = true;
+    ui.copyTitle.disabled = true;
+    ui.toggleAnnotations.disabled = true;
+    updateAnnotationVisibilityControl();
     ui.pages.replaceChildren();
 
     const buffer = await file.arrayBuffer();
@@ -356,6 +366,7 @@ async function openPdf(file) {
     }
     await createPagePlaceholders();
     ui.workspace.classList.remove("empty");
+    state.pdfTitle = pdfTitle;
     ui.documentTitle.textContent = pdfTitle;
     document.title = pdfTitle;
     endPdfLoading(true);
@@ -363,6 +374,8 @@ async function openPdf(file) {
     ui.importMemory.disabled = false;
     ui.exportMemory.disabled = false;
     ui.understandImage.disabled = false;
+    ui.copyTitle.disabled = false;
+    ui.toggleAnnotations.disabled = false;
     setStatus(state.analysisEnabled ? "本地 memory 已加载" : "智能标注已暂停", state.analysisEnabled ? "ready" : "");
     clearError();
     updateFocusGuide();
@@ -1135,6 +1148,7 @@ function renderPageAnnotations(pageNumber) {
       mark.setAttribute("aria-label", mark.title);
       setNormalizedBox(mark, box);
       mark.addEventListener("click", (event) => {
+        if (!state.annotationsVisible) return;
         event.stopPropagation();
         const anchorRect = mark.getBoundingClientRect();
         const overlapping = annotation.kind === "image" ? [annotation] : findAnnotationsAtPoint(pageNumber, event.clientX, event.clientY, annotation);
@@ -1162,6 +1176,7 @@ function renderSentCoverage(pageNumber) {
 }
 
 function findAnnotationsAtPoint(pageNumber, clientX, clientY, primary = null) {
+  if (!state.annotationsVisible) return [];
   if (!clientX && !clientY) return primary ? [primary] : [];
   const record = state.pages.get(pageNumber);
   if (!record) return primary ? [primary] : [];
@@ -1182,6 +1197,7 @@ function findAnnotationsAtPoint(pageNumber, clientX, clientY, primary = null) {
 }
 
 function handleTextMapAnnotationClick(pageNumber, event) {
+  if (!state.annotationsVisible) return;
   if (!document.getSelection()?.isCollapsed) return;
   const overlapping = findAnnotationsAtPoint(pageNumber, event.clientX, event.clientY);
   const imageAnnotation = overlapping.length ? null : findImageAnnotationAtPoint(pageNumber, event.clientX, event.clientY);
@@ -1193,6 +1209,7 @@ function handleTextMapAnnotationClick(pageNumber, event) {
 }
 
 function findImageAnnotationAtPoint(pageNumber, clientX, clientY) {
+  if (!state.annotationsVisible) return null;
   const record = state.pages.get(pageNumber);
   if (!record) return null;
   const pageRect = record.element.getBoundingClientRect();
@@ -1206,6 +1223,7 @@ function findImageAnnotationAtPoint(pageNumber, clientX, clientY) {
 }
 
 function openAnnotationChooser(annotations, anchorRect) {
+  if (!state.annotationsVisible) return;
   state.bubbleStack = [];
   ui.bubbleLayer.replaceChildren();
   const chooser = document.createElement("section");
@@ -1238,6 +1256,7 @@ function openAnnotationChooser(annotations, anchorRect) {
 }
 
 function openAnnotationBubble(annotation, anchorRect) {
+  if (!state.annotationsVisible) return;
   const bubble = {
     id: annotation.id,
     title: annotation.content?.label || (annotation.kind === "image" ? t("图片解释", "Image explanation") : t("解释", "Explanation")),
@@ -1803,6 +1822,60 @@ function syncActiveApiProfileFromForm() {
     model: ui.apiModel.value.trim(),
     apiKey: ui.apiKey.value.trim(),
   });
+}
+
+function updateAnnotationVisibilityControl() {
+  const visible = state.annotationsVisible;
+  ui.workspace.classList.toggle("annotations-hidden", !visible);
+  ui.toggleAnnotations.setAttribute("aria-pressed", String(visible));
+  const label = visible ? t("隐藏所有注释", "Hide all annotations") : t("显示所有注释", "Show all annotations");
+  ui.toggleAnnotations.title = label;
+  ui.toggleAnnotations.setAttribute("aria-label", label);
+}
+
+function toggleAnnotations() {
+  if (!state.pdf) return;
+  state.annotationsVisible = !state.annotationsVisible;
+  if (!state.annotationsVisible) {
+    if (document.activeElement?.closest?.(".annotation-layer, .bubble-layer")) document.activeElement.blur();
+    closeBubbles();
+  }
+  updateAnnotationVisibilityControl();
+  toast(state.annotationsVisible ? t("所有注释已显示", "All annotations shown") : t("所有注释已隐藏", "All annotations hidden"));
+}
+
+let copyTitleFeedbackTimer;
+async function copyDocumentTitle() {
+  const title = state.pdfTitle.trim();
+  if (!title) return;
+  try {
+    await writeClipboardText(title);
+    clearTimeout(copyTitleFeedbackTimer);
+    ui.copyTitle.classList.add("copied");
+    copyTitleFeedbackTimer = setTimeout(() => ui.copyTitle.classList.remove("copied"), 900);
+    toast(t("标题已复制", "Title copied"));
+  } catch (error) {
+    toast(t("复制标题失败", "Could not copy title"), true);
+    console.warn("Could not copy PDF title", error);
+  }
+}
+
+async function writeClipboardText(value) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value);
+    return;
+  }
+  const input = document.createElement("textarea");
+  input.value = value;
+  input.setAttribute("readonly", "");
+  Object.assign(input.style, { position: "fixed", inset: "0 auto auto -9999px", opacity: "0" });
+  document.body.append(input);
+  input.select();
+  try {
+    if (!document.execCommand("copy")) throw new Error("Clipboard copy was rejected");
+  } finally {
+    input.remove();
+  }
 }
 
 function currentApiProfileDraft() {

@@ -14,12 +14,20 @@
         <button id="openFile" class="button primary" data-i18n="openPdf">打开 PDF</button>
         <input id="fileInput" type="file" accept="application/pdf,.pdf" hidden />
       </div>
-      <span id="documentTitle" class="document-title" data-i18n="noPaper">尚未打开文档</span>
+      <div class="document-heading">
+        <span id="documentTitle" class="document-title" data-i18n="noPaper">尚未打开文档</span>
+        <button id="copyTitle" class="title-copy-button" type="button" title="复制标题" aria-label="复制标题" disabled>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="10" height="11" rx="2" /><path d="M16 8V6a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h1" /></svg>
+        </button>
+      </div>
       <div class="toolbar-actions">
         <div id="statusShell" class="status-shell" data-status-key="initial">
           <span id="analysisState" class="status" data-i18n="waitingPdf">等待 PDF</span>
           <button id="dismissStatus" class="status-dismiss" type="button" title="关闭当前状态" aria-label="关闭当前状态">×</button>
         </div>
+        <button id="toggleAnnotations" class="icon-button annotations-toggle" type="button" title="隐藏所有注释" aria-label="隐藏所有注释" aria-pressed="true" disabled>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.8 12s3.3-5.2 9.2-5.2 9.2 5.2 9.2 5.2-3.3 5.2-9.2 5.2S2.8 12 2.8 12Z" /><circle cx="12" cy="12" r="2.8" /><path class="eye-slash" d="m4.5 4.5 15 15" /></svg>
+        </button>
         <button id="toggleAnalysis" class="icon-button" title="暂停或继续智能标注" disabled>◉</button>
         <button id="resendViewport" class="icon-button" title="清除当前视野的发送记录并重新识别" disabled>↻</button>
         <button id="importMemory" class="icon-button" title="导入当前 PDF memory" disabled>⇧</button>

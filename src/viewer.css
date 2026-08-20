@@ -31,7 +31,15 @@ button { color: inherit; }
 .brand { min-width: 202px; font-weight: 730; letter-spacing: -.02em; }
 .brand-mark { display: grid; place-items: center; width: 28px; height: 28px; color: white; background: var(--accent); border-radius: 9px 9px 9px 3px; }
 .toolbar-start .button { flex: none; }
-.document-title { min-width: 0; width: 100%; overflow: hidden; text-align: center; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 13px; }
+.document-heading { display: grid; grid-template-columns: 26px minmax(0, auto) 26px; align-items: center; justify-self: center; min-width: 0; max-width: 100%; }
+.document-heading::before { content: ""; width: 26px; }
+.document-title { min-width: 0; overflow: hidden; text-align: center; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 13px; }
+.title-copy-button { display: grid; place-items: center; width: 26px; height: 26px; padding: 0; color: var(--muted); border: 0; border-radius: 8px; background: transparent; cursor: pointer; transition: color .16s ease, background .16s ease, transform .16s ease; }
+.title-copy-button:hover, .title-copy-button:focus-visible { color: var(--accent); background: var(--accent-soft); }
+.title-copy-button:active { transform: scale(.94); }
+.title-copy-button:disabled { visibility: hidden; }
+.title-copy-button.copied { color: white; background: var(--accent); }
+.title-copy-button svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 .toolbar-actions { min-width: 0; justify-self: end; justify-content: flex-end; }
 .status-shell { position: relative; min-width: 0; max-width: min(30vw, 390px); flex: 0 1 auto; overflow: hidden; border-radius: 999px; }
 .status-shell.dismissed { display: none; }
@@ -47,6 +55,10 @@ button { color: inherit; }
 .button:hover, .icon-button:hover { filter: brightness(.97); transform: translateY(-1px); }
 .button:disabled, .icon-button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
 .icon-button { display: grid; place-items: center; width: 34px; height: 34px; padding: 0; border-radius: 10px; font-size: 17px; }
+.icon-button > svg { display: block; width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.annotations-toggle[aria-pressed="true"] { color: var(--accent); border-color: #b9cbc5; background: #f4faf8; }
+.annotations-toggle .eye-slash { opacity: 0; transition: opacity .16s ease; }
+.annotations-toggle[aria-pressed="false"] .eye-slash { opacity: 1; }
 
 .workspace { position: relative; height: calc(100dvh - var(--toolbar-height)); }
 .viewer { position: absolute; inset: 0; overflow: auto; scroll-behavior: smooth; }
@@ -67,7 +79,8 @@ button { color: inherit; }
 .text-map .markedContent { display: contents; }
 .text-map ::selection { color: transparent; background: rgba(0, 90, 255, .28); }
 .text-map br::selection { background: transparent; }
-.annotation-layer { z-index: 3; pointer-events: none; }
+.annotation-layer { z-index: 3; pointer-events: none; opacity: 1; transition: opacity .16s ease; }
+.workspace.annotations-hidden .annotation-layer { visibility: hidden; opacity: 0; pointer-events: none; }
 .annotation { position: absolute; margin: 0; padding: 0; appearance: none; pointer-events: auto; cursor: pointer; border: 0; border-radius: 0; outline: 0; background: transparent; }
 .annotation::after { content: ""; position: absolute; z-index: 1; left: 0; right: 0; top: calc(100% - 3px); height: 2px; border-radius: 999px; background: currentColor; opacity: .7; pointer-events: none; transition: height .12s ease, opacity .12s ease, filter .12s ease; }
 .annotation.term { z-index: 2; color: var(--term); }
@@ -218,7 +231,8 @@ button { color: inherit; }
   .toolbar-start { grid-column: 1; grid-row: 1; }
   .brand { display: none; }
   .toolbar-start .button { padding: 7px 10px; }
-  .document-title { grid-column: 2; grid-row: 1; width: 100%; max-width: none; padding-inline: 8px; }
+  .document-heading { grid-column: 2; grid-row: 1; max-width: 100%; }
+  .document-title { max-width: 100%; padding-inline: 8px; }
   .toolbar-actions { grid-column: 1 / -1; grid-row: 2; width: 100%; gap: 6px; }
   .status-shell { flex: 1; max-width: none; }
   .status { padding-left: 7px; }

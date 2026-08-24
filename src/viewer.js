@@ -8,6 +8,7 @@ import { expandRangeToMathTokens, tokenizeMath } from "./math.js";
 import { findExactTermRange, isAnnotationAnchorConsistent } from "./annotation-anchor.js";
 import { computePdfIdentity } from "./pdf-identity.js";
 import { resolvePdfTitle } from "./pdf-title.js";
+import { calculateCanvasResolution, effectiveDisplayScale } from "./render-resolution.js";
 import { render as renderMath } from "./vendor/katex/katex.mjs";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = chrome.runtime.getURL("vendor/pdf.worker.mjs");
@@ -141,7 +142,8 @@ ui.quickLinkProvider.addEventListener("change", previewReaderSettings);
 ui.quickLinkCustomLabel.addEventListener("input", previewReaderSettings);
 ui.quickLinkCustomTemplate.addEventListener("input", previewReaderSettings);
 ui.interfaceLanguage.addEventListener("change", previewReaderSettings);
-window.addEventListener("resize", () => { layoutBubbles(); updateFocusGuide(); scheduleAnalysis(); });
+window.addEventListener("resize", handleWindowResize);
+window.visualViewport?.addEventListener("resize", scheduleCanvasResolutionRefresh);
 document.addEventListener("keydown", handleKeydown);
 ui.viewer.addEventListener("mouseup", () => setTimeout(updateSelectionTools, 0));
 ui.bubbleLayer.addEventListener("mouseup", () => setTimeout(updateSelectionTools, 0));
@@ -149,6 +151,7 @@ document.addEventListener("selectionchange", () => {
   if (document.getSelection()?.isCollapsed) hideSelectionTools();
 });
 initializeViewer();
+watchDevicePixelRatio();
 
 function currentLanguage() {
   return state.readerSettings.language === "en" ? "en" : "zh";
@@ -401,13 +404,18 @@ async function createPagePlaceholders() {
     element.style.setProperty("--scale-factor", viewport.scale);
     element.innerHTML = `<canvas></canvas><div class="sent-coverage-layer"></div><div class="text-map"></div><div class="annotation-layer"></div>`;
     ui.pages.append(element);
-    const record = { pageNumber, page, viewport, element, canvas: element.querySelector("canvas"), textItems: [], rendered: false, rendering: null };
+    const record = {
+      pageNumber, page, viewport, element, canvas: element.querySelector("canvas"), textItems: [], rendered: false, rendering: null,
+      canvasRendering: null, canvasRefreshRequested: false,
+    };
     state.pages.set(pageNumber, record);
   }
 
   const observer = new IntersectionObserver((entries) => {
     for (const entry of entries) {
-      if (entry.isIntersecting) renderPage(Number(entry.target.dataset.page));
+      if (!entry.isIntersecting) continue;
+      const pageNumber = Number(entry.target.dataset.page);
+      void renderPage(pageNumber).then(() => refreshPageCanvasResolution(pageNumber)).catch((error) => console.error("PDF page render failed", error));
     }
   }, { root: ui.viewer, rootMargin: "900px 0px" });
   state.pages.forEach(({ element }) => observer.observe(element));
@@ -419,16 +427,7 @@ async function renderPage(pageNumber) {
   if (record.rendering) return record.rendering;
 
   record.rendering = (async () => {
-    const outputScale = window.devicePixelRatio || 1;
-    record.canvas.width = Math.floor(record.viewport.width * outputScale);
-    record.canvas.height = Math.floor(record.viewport.height * outputScale);
-    record.canvas.style.width = `${record.viewport.width}px`;
-    record.canvas.style.height = `${record.viewport.height}px`;
-    await record.page.render({
-      canvasContext: record.canvas.getContext("2d"),
-      viewport: record.viewport,
-      transform: outputScale === 1 ? null : [outputScale, 0, 0, outputScale, 0, 0],
-    }).promise;
+    await renderPageCanvas(record);
 
     const textContent = await record.page.getTextContent({ includeMarkedContent: true });
     const textMap = record.element.querySelector(".text-map");
@@ -467,6 +466,90 @@ async function renderPage(pageNumber) {
     throw error;
   });
   return record.rendering;
+}
+
+async function renderPageCanvas(record) {
+  const displayScale = effectiveDisplayScale(window.devicePixelRatio, window.visualViewport?.scale);
+  const resolution = calculateCanvasResolution(record.viewport.width, record.viewport.height, displayScale);
+  if (record.canvas.width === resolution.pixelWidth && record.canvas.height === resolution.pixelHeight) return record.canvas;
+  if (record.canvasRendering) {
+    record.canvasRefreshRequested = true;
+    return record.canvasRendering;
+  }
+
+  record.canvasRendering = (async () => {
+    const nextCanvas = document.createElement("canvas");
+    nextCanvas.width = resolution.pixelWidth;
+    nextCanvas.height = resolution.pixelHeight;
+    nextCanvas.style.width = `${record.viewport.width}px`;
+    nextCanvas.style.height = `${record.viewport.height}px`;
+    const canvasContext = nextCanvas.getContext("2d");
+    canvasContext.imageSmoothingEnabled = true;
+    canvasContext.imageSmoothingQuality = "high";
+    await record.page.render({
+      canvasContext,
+      viewport: record.viewport,
+      transform: resolution.outputScale === 1 ? null : [
+        resolution.pixelWidth / record.viewport.width,
+        0,
+        0,
+        resolution.pixelHeight / record.viewport.height,
+        0,
+        0,
+      ],
+    }).promise;
+    if (state.pages.get(record.pageNumber) !== record) return record.canvas;
+    record.canvas.replaceWith(nextCanvas);
+    record.canvas = nextCanvas;
+    return nextCanvas;
+  })().finally(() => {
+    record.canvasRendering = null;
+    if (record.canvasRefreshRequested) {
+      record.canvasRefreshRequested = false;
+      void renderPageCanvas(record).catch((error) => console.warn("PDF resolution refresh failed", error));
+    }
+  });
+  return record.canvasRendering;
+}
+
+function refreshPageCanvasResolution(pageNumber) {
+  const record = state.pages.get(pageNumber);
+  if (!record?.rendered) return Promise.resolve(null);
+  return renderPageCanvas(record);
+}
+
+let canvasResolutionTimer = 0;
+function scheduleCanvasResolutionRefresh() {
+  clearTimeout(canvasResolutionTimer);
+  canvasResolutionTimer = setTimeout(() => {
+    if (!state.pdf) return;
+    const viewerRect = ui.viewer.getBoundingClientRect();
+    for (const record of state.pages.values()) {
+      if (!record.rendered) continue;
+      const rect = record.element.getBoundingClientRect();
+      if (rect.bottom < viewerRect.top - 800 || rect.top > viewerRect.bottom + 800) continue;
+      void renderPageCanvas(record).catch((error) => console.warn("PDF resolution refresh failed", error));
+    }
+  }, 180);
+}
+
+let resolutionMediaQuery = null;
+function watchDevicePixelRatio() {
+  resolutionMediaQuery?.removeEventListener?.("change", handleDevicePixelRatioChange);
+  resolutionMediaQuery = matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`);
+  resolutionMediaQuery.addEventListener("change", handleDevicePixelRatioChange, { once: true });
+}
+
+function handleDevicePixelRatioChange() {
+  scheduleCanvasResolutionRefresh();
+  watchDevicePixelRatio();
+}
+
+function handleWindowResize() {
+  layoutBubbles();
+  updateFocusGuide();
+  scheduleAnalysis();
+  scheduleCanvasResolutionRefresh();
 }
 
 function handleViewerScroll() {

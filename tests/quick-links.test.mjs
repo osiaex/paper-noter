@@ -27,3 +27,17 @@ test("all built-in providers use secure query templates", () => {
     assert.match(value.template, /\{query\}/, provider);
   }
 });
+
+test("video and community providers search for the current bubble term", () => {
+  const expected = {
+    bilibili: ["Bilibili", "search.bilibili.com", "keyword=diffusion%20model"],
+    youtube: ["YouTube", "www.youtube.com", "search_query=diffusion%20model"],
+    reddit: ["Reddit", "www.reddit.com", "q=diffusion%20model"],
+  };
+  for (const [provider, [label, host, query]] of Object.entries(expected)) {
+    const link = buildQuickLink("diffusion model", { quickLinkProvider: provider });
+    assert.equal(link.label, label);
+    assert.equal(new URL(link.url).hostname, host);
+    assert.match(link.url, new RegExp(query));
+  }
+});

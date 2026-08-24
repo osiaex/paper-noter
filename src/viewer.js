@@ -29,7 +29,7 @@ const UI_TEXT = {
     emptyDescription: "直接打开网页或本地 PDF 即可自动进入阅读器，也可以在这里手动选择文件。", choosePdf: "选择 PDF",
     connectModel: "连接模型", apiSettings: "API 设置", endpoint: "OpenAI 兼容接口地址", modelName: "模型名称",
     privacy: "Key 仅保存在浏览器本地。图片和当前视野文本只会在触发分析时发往你填写的接口。",
-    interfaceLanguage: "界面语言", language: "语言", focusRange: "视野范围", faster: "更快 · 20%", moreContext: "更多上下文 · 100%", showFocus: "显示视野边框，并稍微调暗视野外内容",
+    interfaceLanguage: "界面语言", language: "语言", showStatusBubble: "显示顶部状态气泡", focusRange: "视野范围", faster: "更快 · 20%", moreContext: "更多上下文 · 100%", showFocus: "显示视野边框，并稍微调暗视野外内容",
     payloadHeading: "自动分析发送内容", textOnly: "仅发送文本", textOnlyHint: "速度更快，不上传视野截图", textImage: "文本 + 视野截图", textImageHint: "适合公式、版式与图文混排内容", imagePrecision: "截图精度", precisionLow: "低 · 最长边 768px", precisionBalanced: "标准 · 最长边 1152px", precisionHigh: "高 · 最长边 1600px", payloadHint: "仅影响自动视野分析；气泡问号和“理解图片”仍会按需发送图片。",
     quickLinks: "名词气泡快速链接", searchService: "搜索服务", quickLinkLabel: "灰色标题名称", quickLinkTemplate: "搜索 URL 模板",
     testConnection: "测试连接", cancel: "取消", save: "保存", analysisFailed: "分析失败", checkApi: "检查 API 设置",
@@ -41,7 +41,7 @@ const UI_TEXT = {
     emptyDescription: "Open a web or local PDF directly, or choose a file here.", choosePdf: "Choose PDF",
     connectModel: "Connect model", apiSettings: "API settings", endpoint: "OpenAI-compatible endpoint", modelName: "Model name",
     privacy: "Your key is stored only in this browser. Images and viewport text are sent only when analysis is triggered.",
-    interfaceLanguage: "Interface language", language: "Language", focusRange: "Viewport range", faster: "Faster · 20%", moreContext: "More context · 100%", showFocus: "Show the viewport border and dim content outside it",
+    interfaceLanguage: "Interface language", language: "Language", showStatusBubble: "Show the top status bubble", focusRange: "Viewport range", faster: "Faster · 20%", moreContext: "More context · 100%", showFocus: "Show the viewport border and dim content outside it",
     payloadHeading: "Automatic analysis payload", textOnly: "Text only", textOnlyHint: "Faster; does not upload a viewport image", textImage: "Text + viewport image", textImageHint: "Best for formulas, layout, and mixed visual content", imagePrecision: "Image precision", precisionLow: "Low · longest side 768px", precisionBalanced: "Balanced · longest side 1152px", precisionHigh: "High · longest side 1600px", payloadHint: "Only affects automatic analysis; bubble follow-ups and image understanding still send images when needed.",
     quickLinks: "Term bubble quick link", searchService: "Search service", quickLinkLabel: "Gray title label", quickLinkTemplate: "Search URL template",
     testConnection: "Test connection", cancel: "Cancel", save: "Save", analysisFailed: "Analysis failed", checkApi: "Check API settings",
@@ -83,7 +83,7 @@ const ui = {
   apiProfileSelect: $("#apiProfileSelect"), addApiProfile: $("#addApiProfile"), renameApiProfile: $("#renameApiProfile"), deleteApiProfile: $("#deleteApiProfile"),
   apiEndpoint: $("#apiEndpoint"), apiModel: $("#apiModel"), apiKey: $("#apiKey"), toast: $("#toast"),
   apiTestResult: $("#apiTestResult"), errorPanel: $("#errorPanel"), errorTitle: $("#errorTitle"), errorDetail: $("#errorDetail"),
-  focusHeight: $("#focusHeight"), focusHeightValue: $("#focusHeightValue"), showFocusGuide: $("#showFocusGuide"),
+  focusHeight: $("#focusHeight"), focusHeightValue: $("#focusHeightValue"), showFocusGuide: $("#showFocusGuide"), showStatusBubble: $("#showStatusBubble"),
   focusGuideMask: $("#focusGuideMask"), focusGuide: $("#focusGuide"),
   selectionTools: $("#selectionTools"), selectionQuestion: $("#selectionQuestion"),
   quickLinkProvider: $("#quickLinkProvider"), quickLinkCustom: $("#quickLinkCustom"), quickLinkCustomLabel: $("#quickLinkCustomLabel"), quickLinkCustomTemplate: $("#quickLinkCustomTemplate"),
@@ -96,7 +96,7 @@ const state = {
   pdf: null, fileName: "", pdfTitle: "", documentId: "", memory: null, pages: new Map(),
   analysisEnabled: true, annotationsVisible: true, analysisTimer: 0, pdfLoading: false,
   regionSignatures: new Set(), inFlightSignatures: new Set(), resetCoverageDocuments: new Set(), coverageEpochs: new Map(), bubbleStack: [], activeImageTasks: 0,
-  readerSettings: { language: "zh", focusHeight: 60, showFocusGuide: true, viewportPayloadMode: "image", imagePrecision: "balanced", quickLinkProvider: "wiki", quickLinkCustomLabel: "自定义", quickLinkCustomTemplate: "" }, textSelection: null,
+  readerSettings: { language: "zh", focusHeight: 60, showFocusGuide: true, showStatusBubble: true, viewportPayloadMode: "image", imagePrecision: "balanced", quickLinkProvider: "wiki", quickLinkCustomLabel: "自定义", quickLinkCustomTemplate: "" }, textSelection: null,
   analysisTasks: new Map(), questionTasks: new Map(), nextAnalysisTaskId: 0, progressTimer: 0, errorAction: null, dismissedStatusKey: "", apiProfileStore: null,
 };
 
@@ -134,6 +134,7 @@ ui.viewer.addEventListener("scroll", handleViewerScroll, { passive: true });
 ui.viewer.addEventListener("scroll", updateFocusGuide, { passive: true });
 ui.focusHeight.addEventListener("input", previewReaderSettings);
 ui.showFocusGuide.addEventListener("change", previewReaderSettings);
+ui.showStatusBubble.addEventListener("change", previewReaderSettings);
 ui.payloadModes.forEach((input) => input.addEventListener("change", previewReaderSettings));
 ui.imagePrecision.addEventListener("change", previewReaderSettings);
 ui.quickLinkProvider.addEventListener("change", previewReaderSettings);
@@ -1993,6 +1994,7 @@ async function openSettings() {
   ui.focusHeight.value = String(state.readerSettings.focusHeight);
   ui.focusHeightValue.value = `${state.readerSettings.focusHeight}%`;
   ui.showFocusGuide.checked = state.readerSettings.showFocusGuide;
+  ui.showStatusBubble.checked = state.readerSettings.showStatusBubble;
   ui.payloadModes.forEach((input) => { input.checked = input.value === state.readerSettings.viewportPayloadMode; });
   ui.imagePrecision.value = state.readerSettings.imagePrecision;
   ui.quickLinkProvider.value = state.readerSettings.quickLinkProvider;
@@ -2155,11 +2157,13 @@ async function loadReaderSettings() {
     language: value.language === "en" ? "en" : "zh",
     focusHeight: clamp(Number(value.focusHeight) || 60, 20, 100),
     showFocusGuide: value.showFocusGuide === undefined ? true : Boolean(value.showFocusGuide),
+    showStatusBubble: value.showStatusBubble === undefined ? true : Boolean(value.showStatusBubble),
     viewportPayloadMode: value.viewportPayloadMode === "text" ? "text" : "image",
     imagePrecision: IMAGE_PRECISION[value.imagePrecision] ? value.imagePrecision : "balanced",
     ...normalizeQuickLinkSettings(value),
   };
   applyInterfaceLanguage();
+  updateStatusBubbleVisibility();
   updateFocusGuide();
 }
 
@@ -2173,11 +2177,13 @@ async function saveReaderSettings() {
     language: ui.interfaceLanguage.value === "en" ? "en" : "zh",
     focusHeight: clamp(Number(ui.focusHeight.value) || 60, 20, 100),
     showFocusGuide: ui.showFocusGuide.checked,
+    showStatusBubble: ui.showStatusBubble.checked,
     viewportPayloadMode: ui.payloadModes.find((input) => input.checked)?.value === "text" ? "text" : "image",
     imagePrecision: IMAGE_PRECISION[ui.imagePrecision.value] ? ui.imagePrecision.value : "balanced",
     ...quickLinkSettings,
   };
   await chrome.storage.local.set({ [READER_SETTINGS_KEY]: state.readerSettings });
+  updateStatusBubbleVisibility();
   updateFocusGuide();
 }
 
@@ -2185,6 +2191,7 @@ function previewReaderSettings() {
   state.readerSettings.focusHeight = clamp(Number(ui.focusHeight.value) || 60, 20, 100);
   state.readerSettings.language = ui.interfaceLanguage.value === "en" ? "en" : "zh";
   state.readerSettings.showFocusGuide = ui.showFocusGuide.checked;
+  state.readerSettings.showStatusBubble = ui.showStatusBubble.checked;
   state.readerSettings.viewportPayloadMode = ui.payloadModes.find((input) => input.checked)?.value === "text" ? "text" : "image";
   state.readerSettings.imagePrecision = IMAGE_PRECISION[ui.imagePrecision.value] ? ui.imagePrecision.value : "balanced";
   Object.assign(state.readerSettings, normalizeQuickLinkSettings({
@@ -2196,6 +2203,7 @@ function previewReaderSettings() {
   updateImagePrecisionState();
   updateQuickLinkCustomState();
   applyInterfaceLanguage();
+  updateStatusBubbleVisibility();
   updateFocusGuide();
   if (state.bubbleStack.length) renderBubbles();
 }
@@ -2347,6 +2355,9 @@ function simpleHash(value) { let hash = 2166136261; for (let index = 0; index < 
 function dismissCurrentStatus() {
   state.dismissedStatusKey = ui.statusShell.dataset.statusKey || "initial";
   ui.statusShell.classList.add("dismissed");
+}
+function updateStatusBubbleVisibility() {
+  ui.statusShell.classList.toggle("hidden-by-setting", !state.readerSettings.showStatusBubble);
 }
 function setStatus(text, className = "", statusKey = "") {
   const localizedText = localizeRuntimeText(text);

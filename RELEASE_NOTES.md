@@ -1,27 +1,27 @@
-# Paper Noter v0.7.6
+# Paper Noter v0.7.7
 
 ## 中文
 
-Paper Noter v0.7.6 增加了更专注、更便捷的论文阅读操作。
+Paper Noter v0.7.7 改进了设置体验，并扩展了名词气泡的外部检索能力。
 
 主要更新：
 
-- 新增一键显示或隐藏全部 PDF 注释；隐藏不会删除 annotation 或 memory。
-- 隐藏注释时自动收起已展开气泡，重新显示后原有注释立即恢复。
-- PDF 标题后新增复制按钮，并提供清晰的成功反馈。
-- 标题操作区采用视觉平衡布局，在桌面端和窄屏下仍保持标题居中。
+- 设置内容独立滚动，“测试连接 / 取消 / 保存”操作栏始终固定在弹窗底部。
+- 完善设置弹窗及底部操作栏的圆角、分隔与窄屏布局。
+- 新增“显示顶部状态气泡”设置；隐藏状态不会影响后台任务与结果保存。
+- 名词气泡快速链接新增 Bilibili、YouTube 和 Reddit 站内搜索。
 
 Full 安装包包含完整 CMap、标准字体回退、WASM 与 ICC 资源。
 
 ## English
 
-Paper Noter v0.7.6 adds more focused and convenient paper-reading controls.
+Paper Noter v0.7.7 improves the settings experience and expands external term search.
 
 Highlights:
 
-- Shows or hides every PDF annotation in one click without deleting annotations or memory.
-- Closes open bubbles while annotations are hidden and restores all marks immediately when shown again.
-- Adds a copy action directly after the PDF title, with clear success feedback.
-- Keeps the title visually centered across desktop and narrow toolbar layouts.
+- Keeps the Test connection / Cancel / Save action bar fixed at the bottom while settings content scrolls independently.
+- Refines dialog and footer rounding, separation, and narrow-screen behavior.
+- Adds a persistent option to hide the top status bubble without interrupting background tasks or saved results.
+- Adds Bilibili, YouTube, and Reddit to term-bubble quick-link search providers.
 
 The Full package includes complete CMaps, standard-font fallbacks, WASM, and ICC resources.

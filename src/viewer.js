@@ -150,9 +150,6 @@ ui.bubbleLayer.addEventListener("mouseup", () => setTimeout(updateSelectionTools
 document.addEventListener("selectionchange", () => {
   if (document.getSelection()?.isCollapsed) hideSelectionTools();
 });
-initializeViewer();
-watchDevicePixelRatio();
-
 function currentLanguage() {
   return state.readerSettings.language === "en" ? "en" : "zh";
 }
@@ -2469,3 +2466,9 @@ function clearError() {
   state.errorAction = null;
   $("#errorSettings").textContent = t("检查 API 设置", "Check API settings");
 }
+
+// Start only after every module-scoped let/const above has been initialized.
+// Calling watchDevicePixelRatio earlier leaves its resolutionMediaQuery binding
+// in the temporal dead zone and prevents all later zoom refreshes from running.
+initializeViewer();
+watchDevicePixelRatio();

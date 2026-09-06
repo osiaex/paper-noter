@@ -1,0 +1,14 @@
+[
+    {
+        "merged": "com.osiaex.papernoter.app-debug-3:/drawable_ic_launcher.xml.flat",
+        "source": "com.osiaex.papernoter.app-main-5:/drawable/ic_launcher.xml"
+    },
+    {
+        "merged": "C:\\Users\\osiaex\\.gradle\\daemon\\9.3.1\\com.osiaex.papernoter.app-debug-3:\\xml_backup_rules.xml.flat",
+        "source": "C:\\Users\\osiaex\\.gradle\\daemon\\9.3.1\\com.osiaex.papernoter.app-main-5:\\xml\\backup_rules.xml"
+    },
+    {
+        "merged": "com.osiaex.papernoter.app-debug-3:/xml_data_extraction_rules.xml.flat",
+        "source": "com.osiaex.papernoter.app-main-5:/xml/data_extraction_rules.xml"
+    }
+]

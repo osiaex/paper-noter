@@ -1,0 +1,4 @@
+int drawable ic_launcher 0x7f010000
+int style Theme_PaperNoter 0x7f020000
+int xml backup_rules 0x7f030000
+int xml data_extraction_rules 0x7f030001

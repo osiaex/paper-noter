@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 16" role="img" aria-label="Flag of China">
+  <rect width="24" height="16" fill="#de2910"/>
+  <path fill="#ffde00" d="m4 2 .67 2.06h2.16L5.08 5.34l.67 2.06L4 6.13 2.25 7.4l.67-2.06-1.75-1.28h2.16L4 2Z"/>
+  <g fill="#ffde00">
+    <circle cx="8" cy="2.4" r=".65"/><circle cx="9.6" cy="4.25" r=".65"/><circle cx="9.25" cy="6.65" r=".65"/><circle cx="7.6" cy="8.15" r=".65"/>
+  </g>
+</svg>

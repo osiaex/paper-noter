@@ -1,0 +1,60 @@
+1<?xml version="1.0" encoding="utf-8"?>
+2<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+3    package="com.osiaex.papernoter"
+4    android:versionCode="1"
+5    android:versionName="0.1.0" >
+6
+7    <uses-sdk
+7-->INJECTED
+8        android:minSdkVersion="26"
+8-->INJECTED
+9        android:targetSdkVersion="36" />
+9-->INJECTED
+10
+11    <uses-permission android:name="android.permission.INTERNET" />
+11-->C:\TAKA\Codes\Codes-Github\paper-noter\android\app\src\main\AndroidManifest.xml:3:5-67
+11-->C:\TAKA\Codes\Codes-Github\paper-noter\android\app\src\main\AndroidManifest.xml:3:22-64
+12
+13    <application
+13-->C:\TAKA\Codes\Codes-Github\paper-noter\android\app\src\main\AndroidManifest.xml:5:5-23:19
+14        android:allowBackup="true"
+14-->C:\TAKA\Codes\Codes-Github\paper-noter\android\app\src\main\AndroidManifest.xml:6:9-35
+15        android:dataExtractionRules="@xml/data_extraction_rules"
+15-->C:\TAKA\Codes\Codes-Github\paper-noter\android\app\src\main\AndroidManifest.xml:7:9-65
+16        android:debuggable="true"
+17        android:extractNativeLibs="false"
+17-->INJECTED
+18        android:fullBackupContent="@xml/backup_rules"
+18-->C:\TAKA\Codes\Codes-Github\paper-noter\android\app\src\main\AndroidManifest.xml:8:9-54
+19        android:icon="@drawable/ic_launcher"
+19-->C:\TAKA\Codes\Codes-Github\paper-noter\android\app\src\main\AndroidManifest.xml:9:9-45
+20        android:label="Paper Noter"
+20-->C:\TAKA\Codes\Codes-Github\paper-noter\android\app\src\main\AndroidManifest.xml:10:9-36
+21        android:roundIcon="@drawable/ic_launcher"
+21-->C:\TAKA\Codes\Codes-Github\paper-noter\android\app\src\main\AndroidManifest.xml:11:9-50
+22        android:theme="@style/Theme.PaperNoter"
+22-->C:\TAKA\Codes\Codes-Github\paper-noter\android\app\src\main\AndroidManifest.xml:12:9-48
+23        android:usesCleartextTraffic="true" >
+23-->C:\TAKA\Codes\Codes-Github\paper-noter\android\app\src\main\AndroidManifest.xml:13:9-44
+24        <activity
+24-->C:\TAKA\Codes\Codes-Github\paper-noter\android\app\src\main\AndroidManifest.xml:14:9-22:20
+25            android:name="com.osiaex.papernoter.MainActivity"
+25-->C:\TAKA\Codes\Codes-Github\paper-noter\android\app\src\main\AndroidManifest.xml:15:13-41
+26            android:configChanges="keyboard|keyboardHidden|orientation|screenSize|smallestScreenSize|uiMode"
+26-->C:\TAKA\Codes\Codes-Github\paper-noter\android\app\src\main\AndroidManifest.xml:16:13-109
+27            android:exported="true" >
+27-->C:\TAKA\Codes\Codes-Github\paper-noter\android\app\src\main\AndroidManifest.xml:17:13-36
+28            <intent-filter>
+28-->C:\TAKA\Codes\Codes-Github\paper-noter\android\app\src\main\AndroidManifest.xml:18:13-21:29
+29                <action android:name="android.intent.action.MAIN" />
+29-->C:\TAKA\Codes\Codes-Github\paper-noter\android\app\src\main\AndroidManifest.xml:19:17-69
+29-->C:\TAKA\Codes\Codes-Github\paper-noter\android\app\src\main\AndroidManifest.xml:19:25-66
+30
+31                <category android:name="android.intent.category.LAUNCHER" />
+31-->C:\TAKA\Codes\Codes-Github\paper-noter\android\app\src\main\AndroidManifest.xml:20:17-77
+31-->C:\TAKA\Codes\Codes-Github\paper-noter\android\app\src\main\AndroidManifest.xml:20:27-74
+32            </intent-filter>
+33        </activity>
+34    </application>
+35
+36</manifest>

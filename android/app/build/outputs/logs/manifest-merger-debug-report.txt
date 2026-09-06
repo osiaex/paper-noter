@@ -1,0 +1,65 @@
+-- Merging decision tree log ---
+manifest
+ADDED from C:\TAKA\Codes\Codes-Github\paper-noter\android\app\src\main\AndroidManifest.xml:2:1-24:12
+INJECTED from C:\TAKA\Codes\Codes-Github\paper-noter\android\app\src\main\AndroidManifest.xml:2:1-24:12
+INJECTED from C:\TAKA\Codes\Codes-Github\paper-noter\android\app\src\main\AndroidManifest.xml:2:1-24:12
+INJECTED from C:\TAKA\Codes\Codes-Github\paper-noter\android\app\src\main\AndroidManifest.xml:2:1-24:12
+	package
+		INJECTED from C:\TAKA\Codes\Codes-Github\paper-noter\android\app\src\main\AndroidManifest.xml
+	android:versionName
+		INJECTED from C:\TAKA\Codes\Codes-Github\paper-noter\android\app\src\main\AndroidManifest.xml
+	android:versionCode
+		INJECTED from C:\TAKA\Codes\Codes-Github\paper-noter\android\app\src\main\AndroidManifest.xml
+	xmlns:android
+		ADDED from C:\TAKA\Codes\Codes-Github\paper-noter\android\app\src\main\AndroidManifest.xml:2:11-69
+uses-permission#android.permission.INTERNET
+ADDED from C:\TAKA\Codes\Codes-Github\paper-noter\android\app\src\main\AndroidManifest.xml:3:5-67
+	android:name
+		ADDED from C:\TAKA\Codes\Codes-Github\paper-noter\android\app\src\main\AndroidManifest.xml:3:22-64
+application
+ADDED from C:\TAKA\Codes\Codes-Github\paper-noter\android\app\src\main\AndroidManifest.xml:5:5-23:19
+INJECTED from C:\TAKA\Codes\Codes-Github\paper-noter\android\app\src\main\AndroidManifest.xml:5:5-23:19
+	android:extractNativeLibs
+		INJECTED from C:\TAKA\Codes\Codes-Github\paper-noter\android\app\src\main\AndroidManifest.xml
+	android:label
+		ADDED from C:\TAKA\Codes\Codes-Github\paper-noter\android\app\src\main\AndroidManifest.xml:10:9-36
+	android:fullBackupContent
+		ADDED from C:\TAKA\Codes\Codes-Github\paper-noter\android\app\src\main\AndroidManifest.xml:8:9-54
+	android:roundIcon
+		ADDED from C:\TAKA\Codes\Codes-Github\paper-noter\android\app\src\main\AndroidManifest.xml:11:9-50
+	android:icon
+		ADDED from C:\TAKA\Codes\Codes-Github\paper-noter\android\app\src\main\AndroidManifest.xml:9:9-45
+	android:allowBackup
+		ADDED from C:\TAKA\Codes\Codes-Github\paper-noter\android\app\src\main\AndroidManifest.xml:6:9-35
+	android:theme
+		ADDED from C:\TAKA\Codes\Codes-Github\paper-noter\android\app\src\main\AndroidManifest.xml:12:9-48
+	android:dataExtractionRules
+		ADDED from C:\TAKA\Codes\Codes-Github\paper-noter\android\app\src\main\AndroidManifest.xml:7:9-65
+	android:usesCleartextTraffic
+		ADDED from C:\TAKA\Codes\Codes-Github\paper-noter\android\app\src\main\AndroidManifest.xml:13:9-44
+activity#com.osiaex.papernoter.MainActivity
+ADDED from C:\TAKA\Codes\Codes-Github\paper-noter\android\app\src\main\AndroidManifest.xml:14:9-22:20
+	android:exported
+		ADDED from C:\TAKA\Codes\Codes-Github\paper-noter\android\app\src\main\AndroidManifest.xml:17:13-36
+	android:configChanges
+		ADDED from C:\TAKA\Codes\Codes-Github\paper-noter\android\app\src\main\AndroidManifest.xml:16:13-109
+	android:name
+		ADDED from C:\TAKA\Codes\Codes-Github\paper-noter\android\app\src\main\AndroidManifest.xml:15:13-41
+intent-filter#action:name:android.intent.action.MAIN+category:name:android.intent.category.LAUNCHER
+ADDED from C:\TAKA\Codes\Codes-Github\paper-noter\android\app\src\main\AndroidManifest.xml:18:13-21:29
+action#android.intent.action.MAIN
+ADDED from C:\TAKA\Codes\Codes-Github\paper-noter\android\app\src\main\AndroidManifest.xml:19:17-69
+	android:name
+		ADDED from C:\TAKA\Codes\Codes-Github\paper-noter\android\app\src\main\AndroidManifest.xml:19:25-66
+category#android.intent.category.LAUNCHER
+ADDED from C:\TAKA\Codes\Codes-Github\paper-noter\android\app\src\main\AndroidManifest.xml:20:17-77
+	android:name
+		ADDED from C:\TAKA\Codes\Codes-Github\paper-noter\android\app\src\main\AndroidManifest.xml:20:27-74
+uses-sdk
+INJECTED from C:\TAKA\Codes\Codes-Github\paper-noter\android\app\src\main\AndroidManifest.xml reason: use-sdk injection requested
+INJECTED from C:\TAKA\Codes\Codes-Github\paper-noter\android\app\src\main\AndroidManifest.xml
+INJECTED from C:\TAKA\Codes\Codes-Github\paper-noter\android\app\src\main\AndroidManifest.xml
+	android:targetSdkVersion
+		INJECTED from C:\TAKA\Codes\Codes-Github\paper-noter\android\app\src\main\AndroidManifest.xml
+	android:minSdkVersion
+		INJECTED from C:\TAKA\Codes\Codes-Github\paper-noter\android\app\src\main\AndroidManifest.xml

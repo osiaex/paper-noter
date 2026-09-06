@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Paper Noter</title>
+    <link rel="stylesheet" href="vendor/katex/katex.min.css" />
+    <link rel="stylesheet" href="viewer.css" />
+  </head>
+  <body>
+    <header class="toolbar">
+      <div class="toolbar-start">
+        <div class="brand"><span class="brand-mark">P</span><span>Paper Noter</span></div>
+        <button id="openFile" class="button primary" data-i18n="openPdf">打开 PDF</button>
+        <input id="fileInput" type="file" accept="application/pdf,.pdf" hidden />
+      </div>
+      <div class="document-heading">
+        <span id="documentTitle" class="document-title" data-i18n="noPaper">尚未打开文档</span>
+        <button id="copyTitle" class="title-copy-button" type="button" title="复制标题" aria-label="复制标题" disabled>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="10" height="11" rx="2" /><path d="M16 8V6a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h1" /></svg>
+        </button>
+      </div>
+      <div class="toolbar-actions">
+        <div id="statusShell" class="status-shell" data-status-key="initial">
+          <span id="analysisState" class="status" data-i18n="waitingPdf">等待 PDF</span>
+          <button id="dismissStatus" class="status-dismiss" type="button" title="关闭当前状态" aria-label="关闭当前状态">×</button>
+        </div>
+        <button id="toggleAnnotations" class="icon-button annotations-toggle" type="button" title="隐藏所有注释" aria-label="隐藏所有注释" aria-pressed="true" disabled>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.8 12s3.3-5.2 9.2-5.2 9.2 5.2 9.2 5.2-3.3 5.2-9.2 5.2S2.8 12 2.8 12Z" /><circle cx="12" cy="12" r="2.8" /><path class="eye-slash" d="m4.5 4.5 15 15" /></svg>
+        </button>
+        <button id="toggleAnalysis" class="icon-button" title="暂停或继续智能标注" disabled>◉</button>
+        <button id="resendViewport" class="icon-button" title="清除当前视野的发送记录并重新识别" disabled>↻</button>
+        <button id="importMemory" class="icon-button" title="导入当前 PDF memory" disabled>⇧</button>
+        <input id="memoryInput" type="file" accept=".jsonl,.ndjson,application/x-ndjson,application/json" hidden />
+        <button id="exportMemory" class="icon-button" title="导出当前 PDF memory" disabled>⇩</button>
+        <button id="settingsButton" class="icon-button" title="API 设置">⚙</button>
+      </div>
+    </header>
+
+    <main id="workspace" class="workspace empty">
+      <aside class="figure-rail">
+        <button id="understandImage" class="figure-button" title="立即截取并理解当前视野" disabled>
+          <span>▧</span><small data-i18n="understandImage">理解图片</small>
+        </button>
+      </aside>
+      <section id="viewer" class="viewer">
+        <div id="emptyState" class="empty-state">
+          <div class="empty-icon">PDF</div>
+          <p data-i18n="emptyDescription">直接打开网页或本地 PDF 即可自动进入阅读器，也可以在这里手动选择文件。</p>
+          <button id="emptyOpenFile" class="button primary" data-i18n="choosePdf">选择 PDF</button>
+        </div>
+        <div id="pages" class="pages"></div>
+      </section>
+      <div id="focusGuideMask" class="focus-guide-mask hidden" aria-hidden="true"><div id="focusGuide" class="focus-guide"></div></div>
+      <div id="bubbleLayer" class="bubble-layer"></div>
+      <div id="selectionTools" class="selection-tools hidden" role="toolbar" aria-label="选中文本操作">
+        <button id="selectionQuestion" type="button" title="noting 选中文本">?</button>
+      </div>
+    </main>
+
+    <dialog id="settingsDialog" class="settings-dialog">
+      <form id="settingsForm" method="dialog">
+        <div class="settings-scroll">
+        <div class="dialog-heading">
+          <div><small data-i18n="connectModel">连接模型</small><h2 data-i18n="apiSettings">API 设置</h2></div>
+          <button type="button" id="closeSettings" class="icon-button">×</button>
+        </div>
+        <div class="api-profile-bar">
+          <label class="api-profile-picker">
+            <span data-i18n="activeApiProfile">当前启用的 API</span>
+            <select id="apiProfileSelect" aria-label="当前 API 配置"></select>
+          </label>
+          <button type="button" id="addApiProfile" class="api-profile-button add" title="新增 API 配置" aria-label="新增 API 配置">+</button>
+          <button type="button" id="renameApiProfile" class="api-profile-button" title="重命名 API 配置" aria-label="重命名 API 配置">✎</button>
+          <button type="button" id="deleteApiProfile" class="api-profile-button delete" title="删除 API 配置" aria-label="删除 API 配置">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3m-9 0 1 13h10l1-13M10 11v5m4-5v5" /></svg>
+          </button>
+        </div>
+        <label><span data-i18n="endpoint">OpenAI 兼容接口地址</span><input id="apiEndpoint" type="url" required placeholder="https://api.openai.com/v1 或完整 chat/completions 地址" /></label>
+        <label><span data-i18n="modelName">模型名称</span><input id="apiModel" required placeholder="支持视觉输入的模型" /></label>
+        <label>API Key<input id="apiKey" type="password" required autocomplete="off" placeholder="sk-..." /></label>
+        <p class="privacy-note" data-i18n="privacy">Key 仅保存在浏览器本地。图片和当前视野文本只会在触发分析时发往你填写的接口。</p>
+        <section class="settings-section">
+          <div class="section-title"><strong data-i18n="interfaceLanguage">界面语言</strong></div>
+          <label class="select-label"><span data-i18n="language">语言</span>
+            <span class="language-control">
+              <img id="languageFlag" class="language-flag" src="assets/flag-cn.svg" alt="中国国旗" />
+              <select id="interfaceLanguage"><option value="zh">中文</option><option value="en">English</option></select>
+            </span>
+          </label>
+          <label class="checkbox-label"><input id="showStatusBubble" type="checkbox" checked /><span data-i18n="showStatusBubble">显示顶部状态气泡</span></label>
+        </section>
+        <section class="settings-section">
+          <div class="section-title"><strong data-i18n="focusRange">视野范围</strong><output id="focusHeightValue">60%</output></div>
+          <input id="focusHeight" class="range-input" type="range" min="20" max="100" step="5" value="60" />
+          <div class="range-labels"><span data-i18n="faster">更快 · 20%</span><span data-i18n="moreContext">更多上下文 · 100%</span></div>
+          <label class="checkbox-label"><input id="showFocusGuide" type="checkbox" checked /><span data-i18n="showFocus">显示视野边框，并稍微调暗视野外内容</span></label>
+        </section>
+        <section class="settings-section">
+          <div class="section-title"><strong data-i18n="payloadHeading">自动分析发送内容</strong></div>
+          <label class="radio-label"><input type="radio" name="viewportPayloadMode" value="text" /><span><b data-i18n="textOnly">仅发送文本</b><small data-i18n="textOnlyHint">速度更快，不上传视野截图</small></span></label>
+          <label class="radio-label"><input type="radio" name="viewportPayloadMode" value="image" checked /><span><b data-i18n="textImage">文本 + 视野截图</b><small data-i18n="textImageHint">适合公式、版式与图文混排内容</small></span></label>
+          <label id="imagePrecisionRow" class="select-label"><span data-i18n="imagePrecision">截图精度</span>
+            <select id="imagePrecision">
+              <option value="low" data-i18n="precisionLow">低 · 最长边 768px</option>
+              <option value="balanced" selected data-i18n="precisionBalanced">标准 · 最长边 1152px</option>
+              <option value="high" data-i18n="precisionHigh">高 · 最长边 1600px</option>
+            </select>
+          </label>
+          <p class="setting-hint" data-i18n="payloadHint">仅影响自动视野分析；气泡问号和“理解图片”仍会按需发送图片。</p>
+        </section>
+        <section class="settings-section">
+          <div class="section-title"><strong data-i18n="quickLinks">名词气泡快速链接</strong></div>
+          <label class="select-label"><span data-i18n="searchService">搜索服务</span>
+            <select id="quickLinkProvider">
+              <option value="wiki">Wiki</option>
+              <option value="scholar">Google Scholar</option>
+              <option value="cnki">知网</option>
+              <option value="bilibili">Bilibili</option>
+              <option value="youtube">YouTube</option>
+              <option value="reddit">Reddit</option>
+              <option value="chatgpt">ChatGPT</option>
+              <option value="gemini">Gemini</option>
+              <option value="qwen">QWEN</option>
+              <option value="kimi">Kimi</option>
+              <option value="deepseek">DeepSeek</option>
+              <option value="glm">GLM</option>
+              <option value="custom">自定义</option>
+            </select>
+          </label>
+          <div id="quickLinkCustom" class="quick-link-custom hidden">
+            <label><span data-i18n="quickLinkLabel">灰色标题名称</span><input id="quickLinkCustomLabel" placeholder="例如：My Search" /></label>
+            <label><span data-i18n="quickLinkTemplate">搜索 URL 模板</span><input id="quickLinkCustomTemplate" type="text" inputmode="url" placeholder="https://example.com/search?q={query}" /></label>
+          </div>
+        </section>
+        </div>
+        <div class="settings-footer">
+          <div id="apiTestResult" class="api-test-result" aria-live="polite"></div>
+          <div class="dialog-actions"><button type="button" id="testApi" class="button test-button" data-i18n="testConnection">测试连接</button><span class="dialog-spacer"></span><button type="button" id="cancelSettings" class="button" data-i18n="cancel">取消</button><button type="submit" class="button primary" data-i18n="save">保存</button></div>
+        </div>
+      </form>
+    </dialog>
+
+    <aside id="errorPanel" class="error-panel hidden" role="alert">
+      <div><strong id="errorTitle" data-i18n="analysisFailed">分析失败</strong><p id="errorDetail"></p></div>
+      <button id="errorSettings" class="button" data-i18n="checkApi">检查 API 设置</button>
+      <button id="dismissError" class="icon-button" title="关闭">×</button>
+    </aside>
+    <div id="toast" class="toast" role="status"></div>
+    <script src="platform.js"></script>
+    <script type="module" src="viewer.js"></script>
+  </body>
+</html>

@@ -1,0 +1,5 @@
+com.osiaex.papernoter
+drawable ic_launcher
+style Theme_PaperNoter
+xml backup_rules
+xml data_extraction_rules

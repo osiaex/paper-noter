@@ -1,0 +1,4 @@
+com.osiaex.papernoter:xml/backup_rules = 0x7f030000
+com.osiaex.papernoter:style/Theme.PaperNoter = 0x7f020000
+com.osiaex.papernoter:xml/data_extraction_rules = 0x7f030001
+com.osiaex.papernoter:drawable/ic_launcher = 0x7f010000

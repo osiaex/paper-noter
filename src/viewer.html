@@ -79,6 +79,13 @@
         <label><span data-i18n="endpoint">OpenAI 兼容接口地址</span><input id="apiEndpoint" type="url" required placeholder="https://api.openai.com/v1 或完整 chat/completions 地址" /></label>
         <label><span data-i18n="modelName">模型名称</span><input id="apiModel" required placeholder="支持视觉输入的模型" /></label>
         <label>API Key<input id="apiKey" type="password" required autocomplete="off" placeholder="sk-..." /></label>
+        <section class="api-timeout-section">
+          <div class="section-title"><strong data-i18n="apiTimeout">请求超时</strong><output id="apiTimeoutValue">90s</output></div>
+          <input id="apiTimeout" class="range-input stepped-range" type="range" min="0" max="4" step="1" value="2" list="apiTimeoutStops" />
+          <datalist id="apiTimeoutStops"><option value="0"></option><option value="1"></option><option value="2"></option><option value="3"></option><option value="4"></option></datalist>
+          <div class="timeout-range-labels" aria-hidden="true"><span>30s</span><span>60s</span><span>90s</span><span>240s</span><span data-i18n="timeoutInfinite">无限</span></div>
+          <p class="setting-hint" data-i18n="apiTimeoutHint">超过时限后会取消请求；无限表示扩展不主动超时。</p>
+        </section>
         <p class="privacy-note" data-i18n="privacy">Key 仅保存在浏览器本地。图片和当前视野文本只会在触发分析时发往你填写的接口。</p>
         <section class="settings-section">
           <div class="section-title"><strong data-i18n="interfaceLanguage">界面语言</strong></div>

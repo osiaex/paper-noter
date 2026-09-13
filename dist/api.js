@@ -1,3 +1,5 @@
+import { normalizeApiTimeoutMs } from "./api-timeout.js";
+
 const SETTINGS_KEY = "paperMemoryApiSettings";
 const STORE_VERSION = 2;
 
@@ -15,6 +17,7 @@ export function normalizeApiProfileStore(value) {
       endpoint: source.endpoint || "https://api.openai.com/v1/chat/completions",
       model: source.model || "",
       apiKey: source.apiKey || "",
+      timeoutMs: source.timeoutMs,
     }];
   const usedIds = new Set();
   const profiles = rawProfiles.map((profile, index) => {
@@ -32,6 +35,7 @@ export function normalizeApiProfileStore(value) {
       endpoint,
       model: String(profile?.model || "").trim(),
       apiKey: String(profile?.apiKey || "").trim(),
+      timeoutMs: normalizeApiTimeoutMs(profile?.timeoutMs),
     };
   });
   const activeProfileId = profiles.some((profile) => profile.id === source.activeProfileId)
@@ -74,6 +78,7 @@ export function normalizeApiConnection(profile) {
     endpoint,
     model: String(profile?.model || "").trim(),
     apiKey: String(profile?.apiKey || "").trim(),
+    timeoutMs: normalizeApiTimeoutMs(profile?.timeoutMs),
   };
   const endpointUrl = new URL(normalized.endpoint);
   if (!/^https?:$/.test(endpointUrl.protocol)) throw apiError("API_ENDPOINT_PROTOCOL", "API 地址必须以 http:// 或 https:// 开头。");

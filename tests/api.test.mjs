@@ -35,6 +35,7 @@ test("migrates legacy single-API settings into a profile store", () => {
     endpoint: "https://example.com/v1/chat/completions",
     model: "vision-model",
     apiKey: "secret",
+    timeoutMs: 90_000,
   });
 });
 
@@ -44,11 +45,12 @@ test("preserves multiple profiles and selects the active one", () => {
     activeProfileId: "second",
     profiles: [
       { id: "first", name: "Fast", endpoint: "https://a.example/v1", model: "a", apiKey: "a-key" },
-      { id: "second", name: "Accurate", endpoint: "https://b.example/v1", model: "b", apiKey: "b-key" },
+      { id: "second", name: "Accurate", endpoint: "https://b.example/v1", model: "b", apiKey: "b-key", timeoutMs: 240_000 },
     ],
   });
   assert.equal(store.profiles.length, 2);
   assert.equal(activeApiProfile(store).name, "Accurate");
+  assert.equal(activeApiProfile(store).timeoutMs, 240_000);
 });
 
 test("always retains at least one API profile", () => {
@@ -70,6 +72,7 @@ test("normalizes a draft API connection without persisting it", () => {
     endpoint: "https://example.com/v1/chat/completions",
     model: "model",
     apiKey: "secret",
+    timeoutMs: 90_000,
   });
 });
 

@@ -1,11 +1,13 @@
 import * as pdfjsLib from "./vendor/pdf.mjs";
 import { authorizeApiProfile, extractAssistantText, loadApiProfileStore, loadApiSettings, parseJsonResponse, requestVision, saveApiProfileStore } from "./api.js";
+import { apiTimeoutFromIndex, apiTimeoutIndex } from "./api-timeout.js";
 import { PaperMemory, sha256 } from "./memory.js";
 import { pdfFileName } from "./pdf-routing.js";
-import { intervalLength, synchronizedAnimationDelay } from "./coverage.js";
+import { intervalLength, mergeIntervals, synchronizedAnimationDelay } from "./coverage.js";
 import { buildQuickLink, normalizeQuickLinkSettings, validateQuickLinkSettings } from "./quick-links.js";
 import { expandRangeToMathTokens, tokenizeMath } from "./math.js";
-import { findExactTermRange, isAnnotationAnchorConsistent } from "./annotation-anchor.js";
+import { findExactTermRange, isAnnotationAnchorConsistent, findSavedQuoteRanges } from "./annotation-anchor.js";
+import { calibrateTextLayerWidths } from "./text-layer-geometry.js";
 import { computePdfIdentity } from "./pdf-identity.js";
 import { resolvePdfTitle } from "./pdf-title.js";
 import { calculateCanvasResolution, effectiveDisplayScale } from "./render-resolution.js";
@@ -28,7 +30,7 @@ const UI_TEXT = {
     activeApiProfile: "当前启用的 API",
     openPdf: "打开 PDF", noPaper: "尚未打开文档", waitingPdf: "等待 PDF", understandImage: "理解图片",
     emptyDescription: "直接打开网页或本地 PDF 即可自动进入阅读器，也可以在这里手动选择文件。", choosePdf: "选择 PDF",
-    connectModel: "连接模型", apiSettings: "API 设置", endpoint: "OpenAI 兼容接口地址", modelName: "模型名称",
+    connectModel: "连接模型", apiSettings: "API 设置", endpoint: "OpenAI 兼容接口地址", modelName: "模型名称", apiTimeout: "请求超时", timeoutInfinite: "无限", apiTimeoutHint: "超过时限后会取消请求；无限表示扩展不主动超时。",
     privacy: "Key 仅保存在浏览器本地。图片和当前视野文本只会在触发分析时发往你填写的接口。",
     interfaceLanguage: "界面语言", language: "语言", showStatusBubble: "显示顶部状态气泡", focusRange: "视野范围", faster: "更快 · 20%", moreContext: "更多上下文 · 100%", showFocus: "显示视野边框，并稍微调暗视野外内容",
     payloadHeading: "自动分析发送内容", textOnly: "仅发送文本", textOnlyHint: "速度更快，不上传视野截图", textImage: "文本 + 视野截图", textImageHint: "适合公式、版式与图文混排内容", imagePrecision: "截图精度", precisionLow: "低 · 最长边 768px", precisionBalanced: "标准 · 最长边 1152px", precisionHigh: "高 · 最长边 1600px", payloadHint: "仅影响自动视野分析；气泡问号和“理解图片”仍会按需发送图片。",
@@ -40,7 +42,7 @@ const UI_TEXT = {
     activeApiProfile: "Active API",
     openPdf: "Open PDF", noPaper: "No document open", waitingPdf: "Waiting for PDF", understandImage: "Understand image",
     emptyDescription: "Open a web or local PDF directly, or choose a file here.", choosePdf: "Choose PDF",
-    connectModel: "Connect model", apiSettings: "API settings", endpoint: "OpenAI-compatible endpoint", modelName: "Model name",
+    connectModel: "Connect model", apiSettings: "API settings", endpoint: "OpenAI-compatible endpoint", modelName: "Model name", apiTimeout: "Request timeout", timeoutInfinite: "Unlimited", apiTimeoutHint: "The request is cancelled at the limit; Unlimited disables the extension's timeout.",
     privacy: "Your key is stored only in this browser. Images and viewport text are sent only when analysis is triggered.",
     interfaceLanguage: "Interface language", language: "Language", showStatusBubble: "Show the top status bubble", focusRange: "Viewport range", faster: "Faster · 20%", moreContext: "More context · 100%", showFocus: "Show the viewport border and dim content outside it",
     payloadHeading: "Automatic analysis payload", textOnly: "Text only", textOnlyHint: "Faster; does not upload a viewport image", textImage: "Text + viewport image", textImageHint: "Best for formulas, layout, and mixed visual content", imagePrecision: "Image precision", precisionLow: "Low · longest side 768px", precisionBalanced: "Balanced · longest side 1152px", precisionHigh: "High · longest side 1600px", payloadHint: "Only affects automatic analysis; bubble follow-ups and image understanding still send images when needed.",
@@ -83,6 +85,7 @@ const ui = {
   settingsButton: $("#settingsButton"), settingsDialog: $("#settingsDialog"), settingsForm: $("#settingsForm"),
   apiProfileSelect: $("#apiProfileSelect"), addApiProfile: $("#addApiProfile"), renameApiProfile: $("#renameApiProfile"), deleteApiProfile: $("#deleteApiProfile"),
   apiEndpoint: $("#apiEndpoint"), apiModel: $("#apiModel"), apiKey: $("#apiKey"), toast: $("#toast"),
+  apiTimeout: $("#apiTimeout"), apiTimeoutValue: $("#apiTimeoutValue"),
   apiTestResult: $("#apiTestResult"), errorPanel: $("#errorPanel"), errorTitle: $("#errorTitle"), errorDetail: $("#errorDetail"),
   focusHeight: $("#focusHeight"), focusHeightValue: $("#focusHeightValue"), showFocusGuide: $("#showFocusGuide"), showStatusBubble: $("#showStatusBubble"),
   focusGuideMask: $("#focusGuideMask"), focusGuide: $("#focusGuide"),
@@ -99,6 +102,7 @@ const state = {
   regionSignatures: new Set(), inFlightSignatures: new Set(), resetCoverageDocuments: new Set(), coverageEpochs: new Map(), bubbleStack: [], activeImageTasks: 0,
   readerSettings: { language: "zh", focusHeight: 60, showFocusGuide: true, showStatusBubble: true, viewportPayloadMode: "image", imagePrecision: "balanced", quickLinkProvider: "wiki", quickLinkCustomLabel: "自定义", quickLinkCustomTemplate: "" }, textSelection: null,
   analysisTasks: new Map(), questionTasks: new Map(), nextAnalysisTaskId: 0, progressTimer: 0, errorAction: null, dismissedStatusKey: "", apiProfileStore: null,
+  activeViewportRegions: new Map(),
 };
 
 ui.openFile.addEventListener("click", () => ui.fileInput.click());
@@ -142,6 +146,7 @@ ui.quickLinkProvider.addEventListener("change", previewReaderSettings);
 ui.quickLinkCustomLabel.addEventListener("input", previewReaderSettings);
 ui.quickLinkCustomTemplate.addEventListener("input", previewReaderSettings);
 ui.interfaceLanguage.addEventListener("change", previewReaderSettings);
+ui.apiTimeout.addEventListener("input", updateApiTimeoutValue);
 window.addEventListener("resize", handleWindowResize);
 window.visualViewport?.addEventListener("resize", scheduleCanvasResolutionRefresh);
 document.addEventListener("keydown", handleKeydown);
@@ -434,6 +439,7 @@ async function renderPage(pageNumber) {
     record.textLayer = textLayer;
     const stringItems = textContent.items.filter((item) => item.str !== undefined);
     const pageRect = record.element.getBoundingClientRect();
+    calibrateTextLayerWidths(stringItems, textLayer.textDivs, record.viewport, pageRect);
     let visibleIndex = 0;
     record.textItems = stringItems.flatMap((item, itemIndex) => {
       if (!item.str?.trim()) return [];
@@ -974,6 +980,10 @@ async function analyzeCurrentRegion({ force = false, regionOverride = null, rese
     }
     state.inFlightSignatures.add(signature);
     ownsSignature = true;
+    // Both payload modes need activity feedback. Persisted coverage is only
+    // used for deduplication; it is not the lifetime of a running task.
+    state.activeViewportRegions.set(taskId, { documentId: taskDocumentId, page: region.page, intervals: coverageKey });
+    if (state.documentId === taskDocumentId) renderSentCoverage(region.page);
 
     setStatus(includeImage ? "正在理解当前视野（图文）…" : "正在理解当前视野（仅文本）…", "working");
     const spanPayload = region.spans.map(({ id, text, box }) => ({ id, text, bbox: box }));
@@ -1032,6 +1042,9 @@ async function analyzeCurrentRegion({ force = false, regionOverride = null, rese
     showError("当前视野分析失败", error);
     failAnalysisProgress(taskId, error);
   } finally {
+    const activeRegion = state.activeViewportRegions.get(taskId);
+    state.activeViewportRegions.delete(taskId);
+    if (activeRegion?.documentId === state.documentId) renderSentCoverage(activeRegion.page);
     if (ownsSignature) state.inFlightSignatures.delete(signature);
     if (state.analysisTasks.has(taskId)) finishAnalysisProgress(taskId, "分析任务结束", "任务未产生可保存结果", false);
   }
@@ -1047,7 +1060,7 @@ function findUnderlineInCurrentFocus() {
     const record = state.pages.get(annotation.page);
     if (!record) continue;
     const pageRect = record.element.getBoundingClientRect();
-    const boxes = annotation.anchor?.bboxes || (annotation.anchor?.bbox ? [annotation.anchor.bbox] : []);
+    const boxes = getAnnotationBoxes(annotation, record);
     for (const [x1, y1, x2, y2] of boxes) {
       const underlineRect = {
         left: pageRect.left + x1 * pageRect.width,
@@ -1215,13 +1228,25 @@ function normalizeAnnotationTargets(annotation, region, kind) {
   return [];
 }
 
+function getAnnotationBoxes(annotation, record) {
+  const saved = annotation.anchor?.bboxes || (annotation.anchor?.bbox ? [annotation.anchor.bbox] : []);
+  if (!record?.rendered || !["term", "keypoint"].includes(annotation.kind)) return saved;
+  record.annotationBoxes ??= new WeakMap();
+  if (record.annotationBoxes.has(annotation)) return record.annotationBoxes.get(annotation);
+  const ranges = findSavedQuoteRanges(record.textItems, annotation.anchor);
+  const resolved = ranges?.flatMap(({ itemIndex, start, end }) => getTextRangeBoxes(record.textItems[itemIndex], start, end, record));
+  const boxes = resolved?.length ? resolved : saved;
+  record.annotationBoxes.set(annotation, boxes);
+  return boxes;
+}
+
 function renderPageAnnotations(pageNumber) {
   const record = state.pages.get(pageNumber);
   if (!record?.rendered || !state.memory) return;
   const layer = record.element.querySelector(".annotation-layer");
   layer.replaceChildren();
   for (const annotation of state.memory.list().filter((item) => item.page === pageNumber && isAnnotationAnchorConsistent(item))) {
-    const boxes = annotation.anchor?.bboxes || (annotation.anchor?.bbox ? [annotation.anchor.bbox] : []);
+    const boxes = getAnnotationBoxes(annotation, record);
     for (const box of boxes) {
       const mark = document.createElement("button");
       mark.className = `annotation ${annotation.kind}`;
@@ -1246,7 +1271,10 @@ function renderSentCoverage(pageNumber) {
   const layer = record?.element.querySelector(".sent-coverage-layer");
   if (!layer || !state.memory) return;
   layer.replaceChildren();
-  for (const [start, end] of state.memory.getSentCoverage(pageNumber)) {
+  const intervals = [...state.activeViewportRegions.values()]
+    .filter((region) => region.documentId === state.documentId && region.page === pageNumber)
+    .flatMap((region) => region.intervals);
+  for (const [start, end] of mergeIntervals(intervals)) {
     const region = document.createElement("div");
     region.className = "sent-coverage-region";
     region.style.animationDelay = `${synchronizedAnimationDelay(performance.now(), SENT_COVERAGE_FULL_CYCLE_MS)}ms`;
@@ -1269,7 +1297,7 @@ function findAnnotationsAtPoint(pageNumber, clientX, clientY, primary = null) {
   for (const annotation of state.memory.list()) {
     if (annotation.page !== pageNumber || !["term", "keypoint"].includes(annotation.kind)) continue;
     if (!isAnnotationAnchorConsistent(annotation)) continue;
-    const boxes = annotation.anchor?.bboxes || (annotation.anchor?.bbox ? [annotation.anchor.bbox] : []);
+    const boxes = getAnnotationBoxes(annotation, record);
     if (boxes.some(([x1, y1, x2, y2]) => x >= x1 && x <= x2 && y >= y1 - verticalTolerance && y <= y2 + verticalTolerance)) {
       matches.set(annotation.id, annotation);
     }
@@ -1902,6 +1930,7 @@ function syncActiveApiProfileFromForm() {
     endpoint: ui.apiEndpoint.value.trim(),
     model: ui.apiModel.value.trim(),
     apiKey: ui.apiKey.value.trim(),
+    timeoutMs: apiTimeoutFromIndex(ui.apiTimeout.value),
   });
 }
 
@@ -1971,6 +2000,13 @@ function fillApiProfileForm() {
   ui.apiEndpoint.value = profile.endpoint || "";
   ui.apiModel.value = profile.model || "";
   ui.apiKey.value = profile.apiKey || "";
+  ui.apiTimeout.value = String(apiTimeoutIndex(profile.timeoutMs));
+  updateApiTimeoutValue();
+}
+
+function updateApiTimeoutValue() {
+  const timeoutMs = apiTimeoutFromIndex(ui.apiTimeout.value);
+  ui.apiTimeoutValue.value = timeoutMs ? `${timeoutMs / 1000}s` : t("无限", "Unlimited");
 }
 
 function renderApiProfileSelector({ fillForm = true } = {}) {
@@ -2012,6 +2048,7 @@ function addApiProfile() {
     endpoint: "https://api.openai.com/v1/chat/completions",
     model: "",
     apiKey: "",
+    timeoutMs: 90_000,
   };
   state.apiProfileStore.profiles.push(profile);
   state.apiProfileStore.activeProfileId = profile.id;
@@ -2283,6 +2320,7 @@ function previewReaderSettings() {
   updateImagePrecisionState();
   updateQuickLinkCustomState();
   applyInterfaceLanguage();
+  updateApiTimeoutValue();
   updateStatusBubbleVisibility();
   updateFocusGuide();
   if (state.bubbleStack.length) renderBubbles();

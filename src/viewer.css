@@ -186,6 +186,15 @@ button { color: inherit; }
 .settings-dialog input { width: 100%; padding: 10px 11px; color: var(--ink); border: 1px solid var(--line); border-radius: 9px; outline: none; }
 .settings-dialog input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .privacy-note { padding: 10px 12px; color: var(--muted); background: #f5f6f3; border-radius: 9px; font-size: 12px; line-height: 1.5; }
+.api-timeout-section { margin-top: 17px; }
+.stepped-range { --steps: 4; height: 18px; appearance: none; background: transparent; cursor: pointer; }
+.stepped-range::-webkit-slider-runnable-track { height: 5px; border-radius: 999px; background: radial-gradient(circle at 2px 50%, var(--accent) 0 2px, transparent 2.4px), radial-gradient(circle at 25% 50%, var(--accent) 0 2px, transparent 2.4px), radial-gradient(circle at 50% 50%, var(--accent) 0 2px, transparent 2.4px), radial-gradient(circle at 75% 50%, var(--accent) 0 2px, transparent 2.4px), radial-gradient(circle at calc(100% - 2px) 50%, var(--accent) 0 2px, transparent 2.4px), linear-gradient(to right, var(--line) 0 100%); box-shadow: inset 0 0 0 1px rgba(23,32,31,.05); }
+.stepped-range::-webkit-slider-thumb { width: 17px; height: 17px; margin-top: -6px; appearance: none; border: 3px solid white; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 1px var(--accent), 0 2px 5px rgba(23,32,31,.2); }
+.api-timeout-section datalist { display: none; }
+.timeout-range-labels { display: grid; grid-template-columns: repeat(5, 1fr); margin-top: 1px; color: var(--muted); font-size: 10px; }
+.timeout-range-labels span { text-align: center; }
+.timeout-range-labels span:first-child { text-align: left; }
+.timeout-range-labels span:last-child { text-align: right; }
 .settings-section { margin-top: 17px; padding-top: 16px; border-top: 1px solid var(--line); }
 .section-title { display: flex; justify-content: space-between; align-items: center; font-size: 13px; }
 .section-title output { color: var(--accent); font-weight: 750; }
